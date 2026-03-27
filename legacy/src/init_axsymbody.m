@@ -39,8 +39,18 @@ body.nth = nth;
 
 % Store parameterization
 body.geometry = geometry;
-body.a = max(at(theta));
-body.c = max(ct(theta));
+% Use exact semi-axis values, not max over GL nodes (which gives incorrect values)
+switch lower(geometry.shape)
+  case 'spheroid'
+    % Use defaults if not specified (must match axsym_parameterization defaults)
+    if ~isfield(geometry, 'a'); geometry.a = 0.05; end
+    if ~isfield(geometry, 'c'); geometry.c = 0.1;  end
+    body.a = geometry.a;  % Exact semi-axis in xy-plane
+    body.c = geometry.c;  % Exact semi-axis in z
+  otherwise
+    body.a = max(at(theta));  % For non-spheroid, use max of at(theta)
+    body.c = max(ct(theta));
+end
 body.at = at;
 body.ct = ct;
 body.dadt = dadth;

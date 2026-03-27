@@ -21,7 +21,7 @@ dflag = 0;
 % Tolerance for method
 TOL = 1e-6;
 % Upsampling factors
-upsamp_fac = 2:6;
+upsamp_fac = 2:3;
 % Discretization points
 nth = 40;
 nph = 60;
@@ -63,7 +63,7 @@ for k=1:numel(precomp.upsampfac)
 end
 disp('Special Quadrature')
 % Special Quadrature Region (computed using "high" upsampling)
-uquad(precomp.SQ_mask,:) = stresslet_with_upsamp( xpts.xout(precomp.SQ_mask, :), qb, body, 20);
+uquad(precomp.SQ_mask,:) = stresslet_with_upsamp( xpts.xout(precomp.SQ_mask, :), qb, body, 10);
 
 % Add points back with non-computed values
 u = zeros(size(xpts.xt));
@@ -92,7 +92,7 @@ return
 function xpts = xgrid_selection(body)
 switch lower(body.geometry.shape)
   case 'spheroid'
-    M = 200; L = 0.2;
+    M = 10; L = 0.2;
     xv = linspace(-L/2, L/2, M);
     zv = linspace(-L, L, M);
     [X,Z] = meshgrid(xv, zv);
