@@ -19,10 +19,6 @@ classdef Peanut < quadest.geometry.AxsymGeometry
         amplitude   % Base amplitude (default 2.2)
     end
     
-    properties (Access = private)
-        config      % Configuration for Newton solver
-    end
-    
     methods
         function obj = Peanut(varargin)
             % PEANUT Construct a peanut geometry
@@ -36,7 +32,6 @@ classdef Peanut < quadest.geometry.AxsymGeometry
             parse(p, varargin{:});
             
             obj.amplitude = p.Results.amplitude;
-            obj.config = quadest.util.Config();
         end
         
         function val = baseRadius(obj, theta)
@@ -120,100 +115,9 @@ classdef Peanut < quadest.geometry.AxsymGeometry
             mask = surfDist < distX;
         end
         
-        function theta0 = findThetaRoot(obj, targets, phi)
-            % FINDTHETAROOT Find complex theta root using Newton iteration
-            %
-            %   theta0 = findThetaRoot(obj, targets, phi) computes the complex
-            %   theta value where the kernel becomes singular.
-            %
-            % Uses Newton solver since no analytic formula exists for peanut.
-            %
-            % Inputs:
-            %   targets - [M×3] target points
-            %   phi     - [M×1] phi values (typically from closest grid point)
-            %
-            % Output:
-            %   theta0 - [M×1] complex theta roots
-            
-            arguments
-                obj
-                targets (:,3) {mustBeNumeric}
-                phi (:,1) {mustBeNumeric}
-            end
-            
-            M = size(targets, 1);
-            theta0 = zeros(M, 1);
-            
-            % Use linear map t = 2*theta/pi - 1 for Newton solver
-            imap = @(t) (pi/2) * (t + 1);  % inverse map: t -> theta
-            dfac = pi/2;                    % derivative factor
-            
-            for i = 1:M
-                % Parameterization in t-space
-                gamma = @(t) obj.evaluate(imap(t), phi(i));
-                dgamma = @(t) dfac * obj.drdtheta(imap(t), phi(i));
-                
-                % Find closest real theta first (as initial guess)
-                R_real = @(t) sum((obj.evaluate(t, phi(i)) - targets(i,:)).^2, 2);
-                theta_init = fminbnd(R_real, 0, pi);
-                t_init = 2*theta_init/pi - 1;
-                
-                % Newton solve with complex perturbation
-                t0 = obj.newtonSolve(gamma, dgamma, targets(i,:), t_init + obj.config.newtonInitPerturbation);
-                
-                theta0(i) = imap(t0);
-            end
-        end
-        
         function disp(obj)
             % DISP Display peanut parameters
             fprintf('Peanut: amplitude = %.4f\n', obj.amplitude);
-        end
-    end
-    
-    methods (Access = private)
-        function t0 = newtonSolve(obj, gamma, dgamma, target, t_init)
-            % NEWTONSOLVE Newton iteration for complex root finding
-            %
-            % Solves |gamma(t) - target|^2 = 0 for complex t
-            
-            % Functional and its derivative
-            R2 = @(t) sum((gamma(t) - target).^2, 2);
-            R2_t = @(t) 2 * sum((gamma(t) - target) .* dgamma(t), 2);
-            
-            % First attempt: standard Newton
-            t0 = t_init;
-            tol = obj.config.newtonTol;
-            maxIter = obj.config.newtonMaxIter;
-            
-            for k = 1:maxIter
-                step = R2(t0) / R2_t(t0);
-                t0 = t0 - step;
-                if abs(step) < tol
-                    return;
-                end
-            end
-            
-            % If failed, try again with smaller step size
-            if abs(step) >= tol || isnan(real(t0)) || isnan(imag(t0))
-                quadest.util.Diagnostics.warn('Newton solver: retrying with smaller step size');
-                
-                t0 = t_init;
-                maxIter = obj.config.newtonMaxIterFallback;
-                stepScale = obj.config.newtonStepSizeFallback;
-                
-                for k = 1:maxIter
-                    step = R2(t0) / R2_t(t0);
-                    t0 = t0 - stepScale * step;
-                    if abs(step) < tol
-                        return;
-                    end
-                end
-                
-                if abs(step) >= tol
-                    quadest.util.Diagnostics.warn('Newton solver did not converge');
-                end
-            end
         end
     end
 end

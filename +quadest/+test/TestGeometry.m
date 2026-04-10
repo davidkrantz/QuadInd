@@ -6,6 +6,7 @@ classdef TestGeometry < quadest.test.TestBase
     properties (Access = private)
         spheroid
         peanut
+        capsule
     end
     
     methods
@@ -13,6 +14,7 @@ classdef TestGeometry < quadest.test.TestBase
             %SETUP Create test fixtures
             obj.spheroid = quadest.geometry.Spheroid('a', 0.05, 'c', 0.1);
             obj.peanut = quadest.geometry.Peanut('amplitude', 2.25);
+            obj.capsule = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 4);
         end
         
         function test_spheroid_creation(obj)
@@ -142,6 +144,98 @@ classdef TestGeometry < quadest.test.TestBase
             theta = pi/4;
             obj.assertAlmostEqual(geom.at(theta), sin(pi/4), 1e-10);
             obj.assertAlmostEqual(geom.ct(theta), cos(pi/4), 1e-10);
+        end
+        
+        function test_capsule_creation(obj)
+            %TEST_CAPSULE_CREATION Verify capsule geometry construction
+            geom = quadest.geometry.Capsule('R', 0.5, 'L', 4, 'kappa', 6);
+            obj.assertEqual(geom.R, 0.5);
+            obj.assertEqual(geom.L, 4);
+            obj.assertEqual(geom.kappa, 6);
+        end
+        
+        function test_capsule_parameterization(obj)
+            %TEST_CAPSULE_PARAMETERIZATION Verify capsule shape values
+            theta = [0; pi/2; pi];
+            
+            a_vals = obj.capsule.at(theta);
+            c_vals = obj.capsule.ct(theta);
+            
+            % At poles, a should be 0
+            obj.assertAlmostEqual(a_vals(1), 0, 1e-10);
+            obj.assertAlmostEqual(a_vals(3), 0, 1e-10);
+            
+            % At equator, a should be R=1, c should be 0
+            obj.assertAlmostEqual(a_vals(2), 1, 1e-10);
+            obj.assertAlmostEqual(c_vals(2), 0, 1e-10);
+            
+            % c at poles: +/- L/2 = +/- 3
+            obj.assertAlmostEqual(c_vals(1), 3, 1e-10);
+            obj.assertAlmostEqual(c_vals(3), -3, 1e-10);
+        end
+        
+        function test_capsule_derivatives(obj)
+            %TEST_CAPSULE_DERIVATIVES Verify derivatives via finite difference
+            theta = pi/3;
+            h = 1e-7;
+            
+            % Numerical derivative of at(theta)
+            da_num = (obj.capsule.at(theta + h) - obj.capsule.at(theta - h)) / (2*h);
+            da_exact = obj.capsule.dadt(theta);
+            obj.assertAlmostEqual(da_num, da_exact, 1e-5);
+            
+            % Numerical derivative of ct(theta)
+            dc_num = (obj.capsule.ct(theta + h) - obj.capsule.ct(theta - h)) / (2*h);
+            dc_exact = obj.capsule.dcdt(theta);
+            obj.assertAlmostEqual(dc_num, dc_exact, 1e-5);
+        end
+        
+        function test_capsule_derivatives_at_poles(obj)
+            %TEST_CAPSULE_DERIVATIVES_AT_POLES Verify derivatives at endpoints
+            % dadt(0) = R*kappa/tanh(kappa), dcdt(0) = 0
+            R = obj.capsule.R;
+            kap = obj.capsule.kappa;
+            
+            da0_expected = R * kap / tanh(kap);
+            obj.assertAlmostEqual(obj.capsule.dadt(0), da0_expected, 1e-10);
+            obj.assertAlmostEqual(obj.capsule.dcdt(0), 0, 1e-10);
+            
+            % dadt(pi) = -R*kappa/tanh(kappa), dcdt(pi) = 0
+            obj.assertAlmostEqual(obj.capsule.dadt(pi), -da0_expected, 1e-10);
+            obj.assertAlmostEqual(obj.capsule.dcdt(pi), 0, 1e-10);
+        end
+        
+        function test_capsule_extents(obj)
+            %TEST_CAPSULE_EXTENTS Verify maxRadius and maxHeight
+            obj.assertEqual(obj.capsule.maxRadius(), 1);
+            obj.assertEqual(obj.capsule.maxHeight(), 3);
+        end
+        
+        function test_capsule_exterior_test(obj)
+            %TEST_CAPSULE_EXTERIOR_TEST Verify inside/outside classification
+            % Point clearly outside (beyond radius)
+            obj.assertTrue(obj.capsule.isExterior([2, 0, 0]));
+            % Point clearly outside (beyond length)
+            obj.assertTrue(obj.capsule.isExterior([0, 0, 4]));
+            
+            % Point clearly inside
+            obj.assertFalse(obj.capsule.isExterior([0.1, 0, 0]));
+            obj.assertFalse(obj.capsule.isExterior([0, 0, 0.1]));
+        end
+        
+        function test_capsule_evaluate(obj)
+            %TEST_CAPSULE_EVALUATE Verify surface points
+            theta = [0; pi/2; pi];
+            phi = [0; 0; 0];
+            
+            pts = obj.capsule.evaluate(theta, phi);
+            
+            % North pole: (0, 0, L/2)
+            obj.assertAlmostEqual(pts(1,:), [0, 0, 3], 1e-10);
+            % Equator: (R, 0, 0)
+            obj.assertAlmostEqual(pts(2,:), [1, 0, 0], 1e-10);
+            % South pole: (0, 0, -L/2)
+            obj.assertAlmostEqual(pts(3,:), [0, 0, -3], 1e-10);
         end
         
         function test_geometry_jacobian(obj)

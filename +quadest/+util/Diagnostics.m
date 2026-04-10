@@ -7,6 +7,7 @@ classdef Diagnostics
     % Usage:
     %   quadest.util.Diagnostics.warn('Newton solver did not converge');
     %   quadest.util.Diagnostics.checkDensityResolution(density, nph);
+    %   quadest.util.Diagnostics.checkGeometryResolution(geometry, nth);
     %
     % See also: quadest.util.Config
     
@@ -150,6 +151,153 @@ classdef Diagnostics
             meta.timestamp = datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss');
             meta.matlabVersion = version;
             meta.computer = computer;
+        end
+        
+        function result = checkGeometryResolution(geometry, nth, threshold)
+            % CHECKGEOMETRYRESOLUTION Check if geometry is well-resolved by GL grid
+            %
+            %   result = checkGeometryResolution(geometry, nth) checks whether
+            %   nth Gauss-Legendre nodes adequately resolve the geometry.
+            %
+            %   result = checkGeometryResolution(geometry, nth, threshold)
+            %   uses a custom relative error threshold (default: 1e-10).
+            %
+            % Two complementary checks are performed:
+            %   1. Surface area convergence: compares sum(w) at nth vs 2*nth
+            %      GL nodes. This directly tests whether the Jacobian (which
+            %      enters quadrature weights) is adequately resolved.
+            %   2. Pointwise interpolation of at(theta) and ct(theta) from
+            %      nth to 2*nth GL nodes via barycentric Lagrange. This
+            %      ensures individual surface points are accurately placed.
+            %
+            % Inputs:
+            %   geometry  - AxsymGeometry object
+            %   nth       - Number of theta (GL) points
+            %   threshold - (optional) Relative error threshold, default 1e-10
+            %
+            % Outputs:
+            %   result - struct with fields:
+            %     resolved  - true if all checks pass
+            %     maxError  - maximum error across all checks
+            %     areaError - relative surface area convergence error
+            %     atError   - relative interpolation error for at(theta)
+            %     ctError   - relative interpolation error for ct(theta)
+            
+            arguments
+                geometry (1,1) quadest.geometry.AxsymGeometry
+                nth (1,1) {mustBePositive, mustBeInteger}
+                threshold (1,1) {mustBePositive} = 1e-10
+            end
+            
+            % GL nodes and weights on coarse and fine grids
+            [theta_c, wtheta_c] = quadest.util.GaussLegendre(nth, 0, pi);
+            [theta_f, wtheta_f] = quadest.util.GaussLegendre(2*nth, 0, pi);
+            
+            % --- Surface area convergence check ---
+            % Compute Jacobian J(theta) = |at| * sqrt(dadt^2 + dcdt^2)
+            at_c = geometry.at(theta_c);
+            dadt_c = geometry.dadt(theta_c);
+            dcdt_c = geometry.dcdt(theta_c);
+            J_c = abs(at_c) .* sqrt(dadt_c.^2 + dcdt_c.^2);
+            
+            at_f = geometry.at(theta_f);
+            dadt_f = geometry.dadt(theta_f);
+            dcdt_f = geometry.dcdt(theta_f);
+            J_f = abs(at_f) .* sqrt(dadt_f.^2 + dcdt_f.^2);
+            
+            % Surface area = 2*pi * integral of J over theta
+            area_c = 2 * pi * sum(wtheta_c .* J_c);
+            area_f = 2 * pi * sum(wtheta_f .* J_f);
+            
+            if area_f > 0
+                areaErr = abs(area_c - area_f) / area_f;
+            else
+                areaErr = abs(area_c - area_f);
+            end
+            
+            % --- Pointwise interpolation check for at and ct ---
+            ct_c = geometry.ct(theta_c);
+            ct_f = geometry.ct(theta_f);
+            
+            at_interp = quadest.util.Diagnostics.bclagInterp(theta_c, at_c, theta_f);
+            ct_interp = quadest.util.Diagnostics.bclagInterp(theta_c, ct_c, theta_f);
+            
+            atErr = quadest.util.Diagnostics.relativeError(at_interp, at_f);
+            ctErr = quadest.util.Diagnostics.relativeError(ct_interp, ct_f);
+            
+            % --- Aggregate results ---
+            maxErr = max([areaErr, atErr, ctErr]);
+            resolved = maxErr <= threshold;
+            
+            result.resolved = resolved;
+            result.maxError = maxErr;
+            result.areaError = areaErr;
+            result.atError = atErr;
+            result.ctError = ctErr;
+            
+            if ~resolved
+                names = {'surface area', 'at(theta)', 'ct(theta)'};
+                errs = [areaErr, atErr, ctErr];
+                [~, idx] = max(errs);
+                quadest.util.Diagnostics.warn( ...
+                    ['Geometry may not be well-resolved with nth = %d. ' ...
+                     'Max error in %s: %.2e (threshold: %.2e). ' ...
+                     'Consider increasing nth.'], ...
+                    nth, names{idx}, maxErr, threshold);
+            end
+        end
+    end
+    
+    methods (Static, Access = private)
+        function f_tgt = bclagInterp(x_src, f_src, x_tgt)
+            % BCLAGINTERP Barycentric Lagrange interpolation
+            %
+            % Interpolates data f_src at nodes x_src to target points x_tgt.
+            % Uses the Berrut-Trefethen second-form barycentric formula.
+            %
+            % Reference: Berrut & Trefethen, SIAM Review 46(3), 2004.
+            
+            n = numel(x_src);
+            N = numel(x_tgt);
+            
+            % Compute barycentric weights
+            w = zeros(n, 1);
+            for j = 1:n
+                w(j) = 1 / prod(x_src(j) - x_src([1:j-1, j+1:n]));
+            end
+            
+            % Evaluate interpolant at target points
+            numer = zeros(N, 1);
+            denom = zeros(N, 1);
+            exact = zeros(N, 1);
+            
+            for j = 1:n
+                xdiff = x_tgt - x_src(j);
+                temp = w(j) ./ xdiff;
+                numer = numer + temp .* f_src(j);
+                denom = denom + temp;
+                exact(xdiff == 0) = j;
+            end
+            
+            f_tgt = numer ./ denom;
+            
+            % Handle exact matches
+            jj = find(exact);
+            f_tgt(jj) = f_src(exact(jj));
+        end
+        
+        function err = relativeError(approx, exact)
+            % RELATIVEERROR Max relative error with safe denominator
+            %
+            % Uses max(|exact|) as the normalization to avoid dividing
+            % by zero at individual nodes (e.g., at poles where at=0).
+            
+            scale = max(abs(exact));
+            if scale == 0
+                err = max(abs(approx - exact));
+            else
+                err = max(abs(approx - exact)) / scale;
+            end
         end
     end
 end

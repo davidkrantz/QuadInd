@@ -35,13 +35,46 @@ classdef (Abstract) AxsymGeometry
         
         % Test if points are exterior to the geometry
         mask = isExterior(obj, points)
-        
-        % Find complex theta root for given target point and phi value
-        % Returns the root with smallest imaginary part
-        theta0 = findThetaRoot(obj, target, phi)
     end
     
     methods
+        function theta0 = findThetaRoot(obj, targets, phi)
+            % FINDTHETAROOT Find complex theta root using Newton iteration
+            %
+            %   theta0 = findThetaRoot(obj, targets, phi) computes the complex
+            %   theta values where the kernel becomes singular.
+            %
+            % Default implementation using closure-free Newton iteration via
+            % RootFinder.newtonSolve. Subclasses with analytic formulas
+            % (e.g. Spheroid) should override this method.
+            %
+            % Inputs:
+            %   targets - [M×3] target points
+            %   phi     - [M×1] phi values (typically from closest grid point)
+            %
+            % Output:
+            %   theta0 - [M×1] complex theta roots
+            
+            M = size(targets, 1);
+            theta0 = zeros(M, 1);
+            
+            dfac = pi/2;
+            config = quadest.util.Config();
+            
+            for i = 1:M
+                % Find closest real theta as initial guess
+                R_real = @(t) sum((obj.evaluate(t, phi(i)) - targets(i,:)).^2, 2);
+                theta_init = fminbnd(R_real, 0, pi);
+                t_init = 2*theta_init/pi - 1;
+                
+                % Closure-free Newton solve
+                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(...
+                    obj, targets(i,:), phi(i), t_init, dfac, config);
+                
+                theta0(i) = dfac * (t0 + 1);
+            end
+        end
+        
         function pts = evaluate(obj, theta, phi)
             % EVALUATE Compute surface points at given (theta, phi)
             %

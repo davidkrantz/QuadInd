@@ -48,11 +48,9 @@ classdef RootFinder
                 dgamma_phi0 = geometry.drdphi(theta_star, phi0);
                 
                 r = gamma_phi0 - targets;
-                % Use dot() for each row to match legacy behavior with complex vectors
-                Gphi = zeros(size(targets, 1), 1);
-                for ii = 1:size(targets, 1)
-                    Gphi(ii) = 2 * dot(r(ii,:), dgamma_phi0(ii,:));
-                end
+                % Vectorized row-wise dot product (dot() conjugates first arg
+                % for complex vectors, matching legacy behavior)
+                Gphi = 2 * sum(conj(r) .* dgamma_phi0, 2);
             end
         end
         
@@ -91,62 +89,54 @@ classdef RootFinder
                 dgamma_t0 = dfac * geometry.drdtheta(imap(t0), phi_star);
                 
                 r = gamma_t0 - targets;
-                % Use dot() for each row to match legacy behavior with complex vectors
-                Gtheta = zeros(size(targets, 1), 1);
-                for ii = 1:size(targets, 1)
-                    Gtheta(ii) = 2 * dot(r(ii,:), dgamma_t0(ii,:));
-                end
+                % Vectorized row-wise dot product (dot() conjugates first arg
+                % for complex vectors, matching legacy behavior)
+                Gtheta = 2 * sum(conj(r) .* dgamma_t0, 2);
             end
         end
         
-        function ds0fun = semiRoot(rvec, drds, drdt)
-            % SEMIROOT Semi-analytical root for perpendicular direction integration
+        function [t0, converged] = newtonSolve(geometry, target, phi_star, t_init, dfac, config)
+            % NEWTONSOLVE Closure-free Newton solver for complex theta root
             %
-            %   ds0fun = semiRoot(rvec, drds, drdt)
+            %   [t0, converged] = newtonSolve(geometry, target, phi_star, t_init, dfac, config)
             %
-            % Returns a function handle ds0fun(dt) that gives the approximate
-            % root in the ds direction as a function of perturbation dt.
+            % Solves |gamma(t) - target|^2 = 0 for complex t, where
+            % gamma(t) = geometry.evaluate(dfac*(t+1), phi_star).
             %
-            % Reference: https://doi.org/10.1016/j.camwa.2022.02.001
+            % This is the canonical Newton solver for all complex theta root
+            % finding in the package. It is closure-free: directly calls
+            % geometry.evaluate() and geometry.drdtheta() per step, avoiding
+            % function handle overhead.
+            %
+            % Inputs:
+            %   geometry - AxsymGeometry object
+            %   target   - [1×3] target point
+            %   phi_star - scalar phi value
+            %   t_init   - scalar initial guess in mapped t-space
+            %   dfac     - derivative scaling factor (typically pi/2)
+            %   config   - (optional) Config object for solver parameters
+            %
+            % Outputs:
+            %   t0        - complex root in mapped t-space
+            %   converged - logical, true if solver converged
             
-            r2 = sum(rvec.^2);
-            r_dot_drdt = dot(rvec, drdt);
-            drdt2 = sum(drdt.^2);
-            r_dot_drds = dot(rvec, drds);
-            drdt_dot_drds = dot(drdt, drds);
-            drds2 = sum(drds.^2);
-            
-            % Coefficients of quadratic approximation
-            aa = @(dt) r2 + 2*r_dot_drdt*dt + drdt2*dt.^2;
-            bb = @(dt) 2*r_dot_drds + 2*drdt_dot_drds*dt;
-            cc = @(dt) drds2;
-            
-            % Explicit root for first-order linearization
-            ds0fun = @(dt) -bb(dt)./(2*cc(dt)) + 1i*sqrt(aa(dt)./cc(dt) - (bb(dt)./(2*cc(dt))).^2);
-        end
-        
-        function [t0, converged] = newtonSolve(gamma, dgamma, target, t_init, config)
-            % NEWTONSOLVE Newton iteration for complex root finding
-            %
-            %   [t0, converged] = newtonSolve(gamma, dgamma, target, t_init, config)
-            %
-            % Solves |gamma(t) - target|^2 = 0 for complex t.
-            
-            if nargin < 5
+            if nargin < 6
                 config = quadest.util.Config();
             end
             
-            R2 = @(t) sum((gamma(t) - target).^2, 2);
-            R2_t = @(t) 2 * sum((gamma(t) - target) .* dgamma(t), 2);
-            
-            % First attempt
-            t0 = t_init + config.newtonInitPerturbation;
             tol = config.newtonTol;
-            maxIter = config.newtonMaxIter;
+            t0 = t_init + config.newtonInitPerturbation;
             converged = false;
             
-            for k = 1:maxIter
-                step = R2(t0) / R2_t(t0);
+            % First attempt: standard Newton
+            for k = 1:config.newtonMaxIter
+                theta_k = dfac * (t0 + 1);
+                gval = geometry.evaluate(theta_k, phi_star);
+                dgval = dfac * geometry.drdtheta(theta_k, phi_star);
+                rv = gval - target;
+                R2v = sum(rv.^2, 2);
+                R2tv = 2 * sum(rv .* dgval, 2);
+                step = R2v / R2tv;
                 t0 = t0 - step;
                 if abs(step) < tol
                     converged = true;
@@ -157,11 +147,16 @@ classdef RootFinder
             % Fallback with smaller step size
             if ~converged || isnan(real(t0)) || isnan(imag(t0))
                 t0 = t_init + config.newtonInitPerturbation;
-                maxIter = config.newtonMaxIterFallback;
                 stepScale = config.newtonStepSizeFallback;
                 
-                for k = 1:maxIter
-                    step = R2(t0) / R2_t(t0);
+                for k = 1:config.newtonMaxIterFallback
+                    theta_k = dfac * (t0 + 1);
+                    gval = geometry.evaluate(theta_k, phi_star);
+                    dgval = dfac * geometry.drdtheta(theta_k, phi_star);
+                    rv = gval - target;
+                    R2v = sum(rv.^2, 2);
+                    R2tv = 2 * sum(rv .* dgval, 2);
+                    step = R2v / R2tv;
                     t0 = t0 - stepScale * step;
                     if abs(step) < tol
                         converged = true;

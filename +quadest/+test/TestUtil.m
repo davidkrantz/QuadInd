@@ -78,5 +78,48 @@ classdef TestUtil < quadest.test.TestBase
             
             % Note: Under-resolved would issue warning, not error
         end
+        
+        function test_geometryResolution_spheroid_resolved(obj)
+            %TEST_GEOMETRYRESOLUTION_SPHEROID_RESOLVED Spheroid with nth=40 is well-resolved
+            geom = quadest.geometry.Spheroid('a', 0.05, 'c', 0.1);
+            result = quadest.util.Diagnostics.checkGeometryResolution(geom, 40);
+            
+            obj.assertTrue(result.resolved, 'Spheroid should be well-resolved at nth=40');
+            obj.assertTrue(result.maxError < 1e-10, 'Max error should be below threshold');
+            obj.assertTrue(isfield(result, 'areaError'));
+            obj.assertTrue(isfield(result, 'atError'));
+            obj.assertTrue(isfield(result, 'ctError'));
+        end
+        
+        function test_geometryResolution_capsule_resolved(obj)
+            %TEST_GEOMETRYRESOLUTION_CAPSULE_RESOLVED Capsule with nth=60 is well-resolved
+            geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 4);
+            result = quadest.util.Diagnostics.checkGeometryResolution(geom, 60);
+            
+            obj.assertTrue(result.resolved, 'Capsule (kappa=4) should be well-resolved at nth=40');
+        end
+        
+        function test_geometryResolution_underresolved(obj)
+            %TEST_GEOMETRYRESOLUTION_UNDERRESOLVED Sharp capsule with very few points warns
+            geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 20);
+            result = quadest.util.Diagnostics.checkGeometryResolution(geom, 4);
+            
+            obj.assertFalse(result.resolved, 'Sharp capsule should not be resolved at nth=4');
+            obj.assertTrue(result.maxError > 1e-10, 'Max error should exceed threshold');
+        end
+        
+        function test_geometryResolution_result_fields(obj)
+            %TEST_GEOMETRYRESOLUTION_RESULT_FIELDS Verify result struct has correct fields
+            geom = quadest.geometry.Spheroid('a', 1, 'c', 2);
+            result = quadest.util.Diagnostics.checkGeometryResolution(geom, 10);
+            
+            obj.assertTrue(isfield(result, 'resolved'));
+            obj.assertTrue(isfield(result, 'maxError'));
+            obj.assertTrue(isfield(result, 'areaError'));
+            obj.assertTrue(isfield(result, 'atError'));
+            obj.assertTrue(isfield(result, 'ctError'));
+            obj.assertTrue(islogical(result.resolved));
+            obj.assertTrue(result.maxError >= 0);
+        end
     end
 end

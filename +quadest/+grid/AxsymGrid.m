@@ -145,6 +145,9 @@ classdef AxsymGrid < handle
             J_mat = reshape(J, obj.nth, obj.nph);
             W_mat = J_mat .* (obj.wtheta * obj.wphi);
             obj.w = W_mat(:);
+            
+            % Check that the geometry is adequately resolved by this grid
+            quadest.util.Diagnostics.checkGeometryResolution(obj.geometry, obj.nth);
         end
     end
 end

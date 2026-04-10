@@ -27,7 +27,6 @@ classdef CustomAxsym < quadest.geometry.AxsymGeometry
     end
     
     properties (Access = private)
-        config      % Configuration for Newton solver
         maxRadiusCache
         maxHeightCache
     end
@@ -62,7 +61,6 @@ classdef CustomAxsym < quadest.geometry.AxsymGeometry
             obj.cFunc = cFunc;
             obj.daFunc = daFunc;
             obj.dcFunc = dcFunc;
-            obj.config = quadest.util.Config();
             
             % Parse optional arguments
             p = inputParser;
@@ -133,81 +131,10 @@ classdef CustomAxsym < quadest.geometry.AxsymGeometry
             mask = surfDist < distX;
         end
         
-        function theta0 = findThetaRoot(obj, targets, phi)
-            % FINDTHETAROOT Find complex theta root using Newton iteration
-            %
-            % Same implementation as Peanut since no analytic formula.
-            
-            arguments
-                obj
-                targets (:,3) {mustBeNumeric}
-                phi (:,1) {mustBeNumeric}
-            end
-            
-            M = size(targets, 1);
-            theta0 = zeros(M, 1);
-            
-            imap = @(t) (pi/2) * (t + 1);
-            dfac = pi/2;
-            
-            for i = 1:M
-                gamma = @(t) obj.evaluate(imap(t), phi(i));
-                dgamma = @(t) dfac * obj.drdtheta(imap(t), phi(i));
-                
-                R_real = @(t) sum((obj.evaluate(t, phi(i)) - targets(i,:)).^2, 2);
-                theta_init = fminbnd(R_real, 0, pi);
-                t_init = 2*theta_init/pi - 1;
-                
-                t0 = obj.newtonSolve(gamma, dgamma, targets(i,:), t_init + obj.config.newtonInitPerturbation);
-                theta0(i) = imap(t0);
-            end
-        end
-        
         function disp(obj)
             % DISP Display geometry info
             fprintf('%s: maxRadius = %.4f, maxHeight = %.4f\n', ...
                 obj.name, obj.maxRadiusCache, obj.maxHeightCache);
-        end
-    end
-    
-    methods (Access = private)
-        function t0 = newtonSolve(obj, gamma, dgamma, target, t_init)
-            % NEWTONSOLVE Newton iteration for complex root finding
-            
-            R2 = @(t) sum((gamma(t) - target).^2, 2);
-            R2_t = @(t) 2 * sum((gamma(t) - target) .* dgamma(t), 2);
-            
-            t0 = t_init;
-            tol = obj.config.newtonTol;
-            maxIter = obj.config.newtonMaxIter;
-            
-            for k = 1:maxIter
-                step = R2(t0) / R2_t(t0);
-                t0 = t0 - step;
-                if abs(step) < tol
-                    return;
-                end
-            end
-            
-            if abs(step) >= tol || isnan(real(t0)) || isnan(imag(t0))
-                quadest.util.Diagnostics.warn('Newton solver: retrying with smaller step size');
-                
-                t0 = t_init;
-                maxIter = obj.config.newtonMaxIterFallback;
-                stepScale = obj.config.newtonStepSizeFallback;
-                
-                for k = 1:maxIter
-                    step = R2(t0) / R2_t(t0);
-                    t0 = t0 - stepScale * step;
-                    if abs(step) < tol
-                        return;
-                    end
-                end
-                
-                if abs(step) >= tol
-                    quadest.util.Diagnostics.warn('Newton solver did not converge');
-                end
-            end
         end
     end
 end
