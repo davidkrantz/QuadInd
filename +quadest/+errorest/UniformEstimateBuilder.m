@@ -147,8 +147,8 @@ classdef UniformEstimateBuilder
             estimates = zeros(M, ncomp);
             thetaRoots = zeros(M, 1);
             
-            % Find closest grid points
-            idx_closest = knnsearch(grid.x, targets);
+            % Find closest grid points using parametric approach
+            [itheta_all, iphi_all] = quadest.errorest.UniformEstimateBuilder.findNearestNodes(grid, targets);
             
             % Get Gauss-Laguerre quadrature
             [xlag, wlag] = quadest.util.GaussLaguerre8();
@@ -158,7 +158,7 @@ classdef UniformEstimateBuilder
                 target = targets(ii, :);
                 
                 [est, theta0] = quadest.errorest.UniformEstimateBuilder.computeSingleEstimate(...
-                    geometry, grid, target, idx_closest(ii), p, xlag, wlag);
+                    geometry, grid, target, itheta_all(ii), iphi_all(ii), p, xlag, wlag);
                 
                 estimates(ii, :) = est;
                 thetaRoots(ii) = theta0;
@@ -194,8 +194,8 @@ classdef UniformEstimateBuilder
             
             estimates = zeros(M, 1);
             
-            % Find closest grid points
-            idx_closest = knnsearch(grid.x, targets);
+            % Find closest grid points using parametric approach
+            [itheta_all, iphi_all] = quadest.errorest.UniformEstimateBuilder.findNearestNodes(grid, targets);
             
             % Get Gauss-Laguerre quadrature
             [xlag, wlag] = quadest.util.GaussLaguerre8();
@@ -205,8 +205,35 @@ classdef UniformEstimateBuilder
                 target = targets(ii, :);
                 
                 estimates(ii) = quadest.errorest.UniformEstimateBuilder.computeSingleDirectEstimate(...
-                    geometry, grid, target, idx_closest(ii), p, xlag, wlag, dens_3d);
+                    geometry, grid, target, itheta_all(ii), iphi_all(ii), p, xlag, wlag, dens_3d);
             end
+        end
+
+        function [itheta, iphi] = findNearestNodes(grid, targets)
+            % FINDNEARESTNODES Find closest grid node for each target
+            %
+            % Uses the same parametric approach as DensityModifier:
+            %   - phi: nearest index via rounding (exact for uniform grid)
+            %   - theta: minimize actual 3D distance within nearest phi column
+            %
+            % This replaces knnsearch(grid.x, targets) and avoids the
+            % Statistics Toolbox dependency and O(N) KD-tree overhead.
+            
+            % Phi (uniform grid): nearest index via rounding
+            phi_target = mod(atan2(targets(:,2), targets(:,1)), 2*pi);
+            dphi = 2*pi / grid.nph;
+            iphi = mod(round(phi_target / dphi), grid.nph) + 1;
+            
+            % Theta (GL nodes): minimize 3D distance within nearest phi column.
+            % d²(θ_i) = at(θ_i)² + rxy² − 2·at(θ_i)·rxy·cos(φ_col − φ_t) + (ct(θ_i) − z)²
+            at_vals = grid.geometry.at(grid.theta(:));    % [nth × 1]
+            ct_vals = grid.geometry.ct(grid.theta(:));    % [nth × 1]
+            rxy = sqrt(targets(:,1).^2 + targets(:,2).^2);
+            cos_dphi = cos(grid.phi(iphi(:)).' - phi_target);
+            d2 = at_vals.'.^2 + rxy.^2 ...
+                - 2 * (at_vals.' .* rxy) .* cos_dphi ...
+                + (ct_vals.' - targets(:,3)).^2;          % [M × nth]
+            [~, itheta] = min(d2, [], 2);
         end
     end
     
@@ -256,419 +283,343 @@ classdef UniformEstimateBuilder
             end
         end
         
-        function [est, theta0] = computeSingleEstimate(geometry, grid, target, idx_R, p, xlag, wlag)
+        function [est, theta0] = computeSingleEstimate(geometry, grid, target, itheta, iphi, p, xlag, wlag)
             % COMPUTESINGLEESTIMATE Compute error estimate for single target
-                        
-            % Get closest grid point indices
-            [itheta, iphi] = grid.ind2sub(idx_R);
-            theta_star = grid.theta(itheta);
-            phi_star = grid.phi(iphi);
-            
-            % Linear map for theta
-            t_star = (2/pi) * theta_star - 1;
-            imap = @(t) (pi/2) * (t + 1);
-            dfac = pi/2;
-            
-            % Compute phi root
-            [phi0, Gphi] = quadest.errorest.RootFinder.computePhiRoot(geometry, target, theta_star);
-            
-            % Compute theta root
-            if target(3) ~= 0 && isa(geometry, 'quadest.geometry.Spheroid')
-                % Use analytic formula for spheroid
-                theta0 = geometry.findThetaRoot(target, phi_star);
-            else
-                % Use Newton solver
-                gamma_t = @(t) geometry.evaluate(imap(t), phi_star);
-                dgamma_t = @(t) dfac * geometry.drdtheta(imap(t), phi_star);
-                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(gamma_t, dgamma_t, target, t_star);
-                theta0 = imap(t0);
-            end
-            t0 = (2/pi) * theta0 - 1;
-            
-            % Geometric factor for theta
-            % Note: Use dot() to match legacy behavior with complex vectors
-            gamma_t = @(t) geometry.evaluate(imap(t), phi_star);
-            dgamma_t = @(t) dfac * geometry.drdtheta(imap(t), phi_star);
-            r_theta = gamma_t(t0) - target;
-            Gtheta = 2 * dot(r_theta, dgamma_t(t0));
-            
-            % Surface vectors at closest point
-            srfvec = geometry.evaluate(theta_star, phi_star);
-            rvec = srfvec - target;
-            
-            % Semi-analytical root functions
-            drdphi = geometry.drdphi(theta_star, phi_star);
-            drdtheta = geometry.drdtheta(theta_star, phi_star);
-            dp0fun = quadest.errorest.RootFinder.semiRoot(rvec, drdphi, drdtheta);
-            dt0fun = quadest.errorest.RootFinder.semiRoot(rvec, drdtheta, drdphi);
-            
-            % Scaling constants
-            C_TZ = grid.nph * norm(drdtheta) / norm(drdphi);
-            C_GL = max(grid.nth * norm(drdphi) / norm(drdtheta), grid.nth);
-            
-            % Compute estimates for phi direction (trapezoidal rule)
-            estTZ = quadest.errorest.UniformEstimateBuilder.computePhiEstimate(...
-                geometry, grid, target, theta_star, phi0, Gphi, p, ...
-                dp0fun, C_TZ, xlag, wlag);
-            
-            % Compute estimates for theta direction (Gauss-Legendre)
-            estGL = quadest.errorest.UniformEstimateBuilder.computeThetaEstimate(...
-                geometry, grid, target, phi_star, t0, Gtheta, p, ...
-                dt0fun, C_GL, xlag, wlag, imap, dfac);
-            
-            % Combined estimate (sum of both directions)
-            est = estTZ + estGL;
-        end
-        
-        function est = computeSingleDirectEstimate(geometry, grid, target, idx_R, p, xlag, wlag, dens_3d)
-            % COMPUTESINGLEDIRECTESTIMATE Compute error estimate for single target with density
             %
-            % Like computeSingleEstimate but uses the actual density (interpolated
-            % at complex roots) instead of unit density vectors. Returns a scalar.
+            % Optimized: closures eliminated, geometry evaluations minimized,
+            % kernel and integration folded inline, component loop vectorized.
             
-            % Get closest grid point indices
-            [itheta, iphi] = grid.ind2sub(idx_R);
+            % --- Grid values and mapping constants ---
             theta_star = grid.theta(itheta);
             phi_star = grid.phi(iphi);
-            
-            % Linear map for theta
-            t_star = (2/pi) * theta_star - 1;
-            imap = @(t) (pi/2) * (t + 1);
             dfac = pi/2;
             
-            % Compute phi root
+            % --- Phi root (analytic) ---
             [phi0, Gphi] = quadest.errorest.RootFinder.computePhiRoot(geometry, target, theta_star);
             
-            % Compute theta root
+            % --- Theta root ---
             if target(3) ~= 0 && isa(geometry, 'quadest.geometry.Spheroid')
                 theta0 = geometry.findThetaRoot(target, phi_star);
             else
-                gamma_t = @(t) geometry.evaluate(imap(t), phi_star);
-                dgamma_t = @(t) dfac * geometry.drdtheta(imap(t), phi_star);
-                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(gamma_t, dgamma_t, target, t_star);
-                theta0 = imap(t0);
+                t_star = (2/pi) * theta_star - 1;
+                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(...
+                    geometry, target, phi_star, t_star, dfac);
+                theta0 = dfac * (t0 + 1);
             end
             t0 = (2/pi) * theta0 - 1;
             
-            % Geometric factor for theta
-            gamma_t = @(t) geometry.evaluate(imap(t), phi_star);
-            dgamma_t = @(t) dfac * geometry.drdtheta(imap(t), phi_star);
-            r_theta = gamma_t(t0) - target;
-            Gtheta = 2 * dot(r_theta, dgamma_t(t0));
+            % --- Geometric factor Gtheta (one evaluate+drdtheta call) ---
+            gamma_final = geometry.evaluate(theta0, phi_star);
+            dgamma_final = dfac * geometry.drdtheta(theta0, phi_star);
+            r_theta = gamma_final - target;
+            Gtheta = 2 * dot(r_theta, dgamma_final);
             
-            % Surface vectors at closest point
-            srfvec = geometry.evaluate(theta_star, phi_star);
-            rvec = srfvec - target;
+            % --- Geometry at closest point (shared by kernel + semiRoot) ---
+            at_star = geometry.at(theta_star);
+            ct_star = geometry.ct(theta_star);
+            dadt_star = geometry.dadt(theta_star);
+            dcdt_star = geometry.dcdt(theta_star);
             
-            % Semi-analytical root functions
-            drdphi = geometry.drdphi(theta_star, phi_star);
-            drdtheta = geometry.drdtheta(theta_star, phi_star);
-            dp0fun = quadest.errorest.RootFinder.semiRoot(rvec, drdphi, drdtheta);
-            dt0fun = quadest.errorest.RootFinder.semiRoot(rvec, drdtheta, drdphi);
+            rvec = [at_star * cos(phi_star), at_star * sin(phi_star), ct_star] - target;
+            drdphi_vec = [-at_star * sin(phi_star), at_star * cos(phi_star), 0];
+            drdtheta_vec = [dadt_star * cos(phi_star), dadt_star * sin(phi_star), dcdt_star];
             
-            % Scaling constants
-            C_TZ = grid.nph * norm(drdtheta) / norm(drdphi);
-            C_GL = max(grid.nth * norm(drdphi) / norm(drdtheta), grid.nth);
+            % --- SemiRoot coefficients (avoids closures) ---
+            % Phi direction: drds=drdphi, drdt=drdtheta
+            dp_r2       = sum(rvec.^2);
+            dp_r_drdt   = rvec * drdtheta_vec.';
+            dp_drdt2    = sum(drdtheta_vec.^2);
+            dp_r_drds   = rvec * drdphi_vec.';
+            dp_dt_ds    = drdtheta_vec * drdphi_vec.';
+            dp_drds2    = sum(drdphi_vec.^2);
             
-            % Interpolate density at phi root (2-point linear in phi direction)
-            q_phi = quadest.errorest.UniformEstimateBuilder.interpDensityPhiSingle(...
-                grid, dens_3d, phi0, itheta);
+            % Theta direction: drds=drdtheta, drdt=drdphi (swap roles)
+            dt_r2       = dp_r2;
+            dt_r_drdt   = dp_r_drds;
+            dt_drdt2    = dp_drds2;
+            dt_r_drds   = dp_r_drdt;
+            dt_dt_ds    = dp_dt_ds;
+            dt_drds2    = dp_drdt2;
             
-            % Interpolate density at theta root (2-point linear in theta direction)
-            q_theta = quadest.errorest.UniformEstimateBuilder.interpDensityThetaSingle(...
-                grid, dens_3d, theta0, theta_star, iphi);
+            % --- Scaling constants ---
+            norm_drdtheta = sqrt(dp_drdt2);
+            norm_drdphi = sqrt(dp_drds2);
+            C_TZ = grid.nph * norm_drdtheta / norm_drdphi;
+            C_GL = max(grid.nth * norm_drdphi / norm_drdtheta, grid.nth);
             
-            % Compute estimates for phi direction with actual density
-            estTZ = quadest.errorest.UniformEstimateBuilder.computePhiEstimateDirect(...
-                geometry, grid, target, theta_star, phi0, Gphi, p, ...
-                dp0fun, C_TZ, xlag, wlag, q_phi);
+            pm1 = p - 1;
             
-            % Compute estimates for theta direction with actual density
-            estGL = quadest.errorest.UniformEstimateBuilder.computeThetaEstimateDirect(...
-                geometry, grid, target, phi_star, t0, Gtheta, p, ...
-                dt0fun, C_GL, xlag, wlag, imap, dfac, q_theta);
+            % ===============================================
+            % Phi direction estimate (trapezoidal rule)
+            % ===============================================
+            ds_phi = xlag / C_TZ;
+            dp0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, 0);
+            dp0_pos = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, ds_phi);
+            dp0_neg = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, -ds_phi);
             
-            % Combined estimate (sum of both directions)
-            est = estTZ + estGL;
-        end
-        
-        function q_interp = interpDensityPhiSingle(grid, dens_3d, phi0, itheta)
-            % INTERPDENSITYPHISINGLE 2-point linear interpolation in phi for single target
-            
-            ncomp = size(dens_3d, 3);
-            phi_grid = grid.phi(:);
-            nph = grid.nph;
-            phi_val = real(phi0);
-            
-            % Find two nearest phi points (accounting for periodicity)
-            [~, sorted_idx] = sort(abs(phi_grid - phi_val));
-            
-            if sorted_idx(1) < 2
-                tmpphi = phi_grid;
-                tmpphi(end) = tmpphi(end) - 2*pi;
-                [~, sorted_idx] = sort(abs(tmpphi - phi_val));
-            elseif sorted_idx(1) > nph - 1
-                tmpphi = phi_grid;
-                tmpphi(1) = tmpphi(1) + 2*pi;
-                [~, sorted_idx] = sort(abs(tmpphi - phi_val));
-            end
-            
-            local_ip = sort(sorted_idx(1:2));
-            p_pts = phi_grid(local_ip);
-            
-            % Handle wrapped values
-            if abs(p_pts(2) - p_pts(1)) > pi
-                if p_pts(1) < pi
-                    p_pts(2) = p_pts(2) - 2*pi;
-                else
-                    p_pts(1) = p_pts(1) - 2*pi;
-                end
-            end
-            
-            q_interp = zeros(1, ncomp);
-            for c = 1:ncomp
-                q_vals = squeeze(dens_3d(itheta, local_ip, c));
-                q_interp(c) = (q_vals(1) * (p_pts(2) - phi0) + ...
-                               q_vals(2) * (phi0 - p_pts(1))) / ...
-                              (p_pts(2) - p_pts(1));
-            end
-        end
-        
-        function q_interp = interpDensityThetaSingle(grid, dens_3d, theta0, theta_star, iphi)
-            % INTERPDENSITYTHETASINGLE 2-point linear interpolation in theta for single target
-            
-            ncomp = size(dens_3d, 3);
-            theta_grid = grid.theta(:);
-            
-            % Find two nearest theta points
-            [~, sorted_idx] = mink(abs(theta_grid - theta_star), 2);
-            local_it = sort(sorted_idx);
-            t_pts = theta_grid(local_it);
-            
-            q_interp = zeros(1, ncomp);
-            denom = t_pts(2) - t_pts(1);
-            for c = 1:ncomp
-                q_vals = squeeze(dens_3d(local_it, iphi, c));
-                if abs(denom) < eps
-                    q_interp(c) = q_vals(1);
-                else
-                    q_interp(c) = (q_vals(1) * (t_pts(2) - theta0) + ...
-                                   q_vals(2) * (theta0 - t_pts(1))) / denom;
-                end
-            end
-            
-            % Handle NaN (can occur for theta0 at poles)
-            q_interp(isnan(q_interp)) = 0;
-        end
-        
-        function estTZ = computePhiEstimateDirect(geometry, grid, target, theta_star, phi0, Gphi, p, dp0fun, C_TZ, xlag, wlag, q_density)
-            % COMPUTEPHIESTIMATEDIRECT Error estimate from phi direction with given density
-            %
-            % Like computePhiEstimate but uses the interpolated density q_density
-            % instead of unit vectors. Returns a scalar.
-            
-            % Check both +/- imaginary parts
             phi0_candidates = [phi0; conj(phi0)];
-            estTZ_both = zeros(2, 1);
+            estTZ_both = zeros(2, 3);
             
             for ii = 1:2
                 phi0_test = phi0_candidates(ii);
                 
-                % Kernel at phi root with actual density
-                fp0t = quadest.errorest.UniformEstimateBuilder.kernelAtPhiRoot(...
-                    geometry, target, theta_star, phi0_test, q_density);
+                % Inline kernel at phi root — precomputed geometry at theta_star
+                srfvec_phi = [at_star * cos(phi0_test), at_star * sin(phi0_test), ct_star];
+                nvec_phi = [-dcdt_star * at_star * cos(phi0_test), ...
+                            -dcdt_star * at_star * sin(phi0_test), ...
+                             dadt_star * at_star];
+                r_phi = srfvec_phi - target;
+                rn = sum(r_phi .* nvec_phi);
+                
+                % With unit density e_c: rq=r(c), fp0t = -6*max(|r|)*|r(c)|*|rn|
+                % So est_const(c) = base_const * |r(c)|, vectorized over all 3 components
+                base_const = 6 * abs(2 / gamma(p)) * max(abs(r_phi)) * abs(rn) * abs(Gphi^(-p));
+                
+                % Integration (identical for all components)
+                dtpos = phi0_test + dp0_pos - dp0_ref;
+                dtneg = phi0_test + dp0_neg - dp0_ref;
+                
+                int_pos = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtpos, grid.nph, pm1);
+                int_neg = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtneg, grid.nph, pm1);
+                
+                int_sum = sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_TZ);
+                
+                % All 3 components at once
+                estTZ_both(ii, :) = base_const * int_sum * abs(r_phi);
+            end
+            
+            estTZ = min(estTZ_both, [], 1);
+            estTZ(isnan(estTZ)) = 0;
+            
+            % ===============================================
+            % Theta direction estimate (Gauss-Legendre)
+            % ===============================================
+            ds_theta = xlag / C_GL;
+            dt0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, 0);
+            dt0_pos = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, ds_theta);
+            dt0_neg = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, -ds_theta);
+            
+            t0_candidates = [t0; conj(t0)];
+            estGL_both = zeros(2, 3);
+            
+            for ii = 1:2
+                t0_test = t0_candidates(ii);
+                
+                % Inline kernel at theta root
+                theta0_test = dfac * (t0_test + 1);
+                at_t0 = geometry.at(theta0_test);
+                ct_t0 = geometry.ct(theta0_test);
+                dadt_t0 = geometry.dadt(theta0_test);
+                dcdt_t0 = geometry.dcdt(theta0_test);
+                
+                srfvec_th = [at_t0 * cos(phi_star), at_t0 * sin(phi_star), ct_t0];
+                nvec_th = dfac * [-dcdt_t0 * at_t0 * cos(phi_star), ...
+                                  -dcdt_t0 * at_t0 * sin(phi_star), ...
+                                   dadt_t0 * at_t0];
+                r_th = srfvec_th - target;
+                rn_th = sum(r_th .* nvec_th);
+                
+                % Vectorized kernel: base_const * |r_th| gives [1x3]
+                base_const = 6 * abs(2 / gamma(p)) * max(abs(r_th)) * abs(rn_th) * abs(Gtheta^(-p));
+                
+                % Integration (identical for all components)
+                dtpos = t0_test - (dt0_pos - dt0_ref);
+                dtneg = t0_test - (dt0_neg - dt0_ref);
+                
+                int_pos = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtpos, grid.nth, pm1);
+                int_neg = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtneg, grid.nth, pm1);
+                
+                int_sum = sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_GL);
+                
+                % All 3 components at once
+                estGL_both(ii, :) = base_const * int_sum * abs(r_th);
+            end
+            
+            estGL = min(estGL_both, [], 1);
+            
+            % Combined estimate (sum of both directions)
+            est = estTZ + estGL;
+        end
+        
+        function est = computeSingleDirectEstimate(geometry, grid, target, itheta, iphi, p, xlag, wlag, dens_3d)
+            % COMPUTESINGLEDIRECTESTIMATE Compute error estimate for single target with density
+            %
+            % Optimized: all closures eliminated, geometry evaluations minimized,
+            % kernel evaluation and integration folded inline.
+            
+            % --- Grid values and mapping constants ---
+            theta_star = grid.theta(itheta);
+            phi_star = grid.phi(iphi);
+            dfac = pi/2;
+            
+            % --- Phi root (analytic) ---
+            [phi0, Gphi] = quadest.errorest.RootFinder.computePhiRoot(geometry, target, theta_star);
+            
+            % --- Theta root ---
+            if target(3) ~= 0 && isa(geometry, 'quadest.geometry.Spheroid')
+                % Analytic formula for spheroid
+                theta0 = geometry.findThetaRoot(target, phi_star);
+                t0 = (2/pi) * theta0 - 1;
+            else
+                t_star = (2/pi) * theta_star - 1;
+                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(...
+                    geometry, target, phi_star, t_star, dfac);
+                theta0 = dfac * (t0 + 1);
+            end
+            
+            % --- Geometric factor Gtheta (one evaluate+drdtheta call) ---
+            gamma_final = geometry.evaluate(theta0, phi_star);
+            dgamma_final = dfac * geometry.drdtheta(theta0, phi_star);
+            r_theta = gamma_final - target;
+            Gtheta = 2 * dot(r_theta, dgamma_final);
+            
+            % --- Geometry at closest point (shared by kernel + semiRoot) ---
+            at_star = geometry.at(theta_star);
+            ct_star = geometry.ct(theta_star);
+            dadt_star = geometry.dadt(theta_star);
+            dcdt_star = geometry.dcdt(theta_star);
+            
+            rvec = [at_star * cos(phi_star), at_star * sin(phi_star), ct_star] - target;
+            drdphi_vec = [-at_star * sin(phi_star), at_star * cos(phi_star), 0];
+            drdtheta_vec = [dadt_star * cos(phi_star), dadt_star * sin(phi_star), dcdt_star];
+            
+            % --- SemiRoot coefficients (avoids closures) ---
+            % Phi direction: drds=drdphi, drdt=drdtheta
+            dp_r2       = sum(rvec.^2);
+            dp_r_drdt   = rvec * drdtheta_vec.';
+            dp_drdt2    = sum(drdtheta_vec.^2);
+            dp_r_drds   = rvec * drdphi_vec.';
+            dp_dt_ds    = drdtheta_vec * drdphi_vec.';
+            dp_drds2    = sum(drdphi_vec.^2);
+            
+            % Theta direction: drds=drdtheta, drdt=drdphi (swap roles)
+            dt_r2       = dp_r2;
+            dt_r_drdt   = dp_r_drds;
+            dt_drdt2    = dp_drds2;
+            dt_r_drds   = dp_r_drdt;
+            dt_dt_ds    = dp_dt_ds;
+            dt_drds2    = dp_drdt2;
+            
+            % --- Scaling constants ---
+            norm_drdtheta = sqrt(dp_drdt2);
+            norm_drdphi = sqrt(dp_drds2);
+            C_TZ = grid.nph * norm_drdtheta / norm_drdphi;
+            C_GL = max(grid.nth * norm_drdphi / norm_drdtheta, grid.nth);
+            
+            % --- Density interpolation ---
+            q_phi = quadest.errorest.DensityModifier.interpDensityPhi(...
+                grid, dens_3d, phi0, itheta);
+            q_theta = quadest.errorest.DensityModifier.interpDensityTheta(...
+                grid, dens_3d, theta0, iphi);
+            
+            % ===============================================
+            % Phi direction estimate (trapezoidal rule)
+            % ===============================================
+            ds_phi = xlag / C_TZ;
+            dp0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, 0);
+            dp0_pos = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, ds_phi);
+            dp0_neg = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, -ds_phi);
+            
+            phi0_candidates = [phi0; conj(phi0)];
+            estTZ_both = zeros(2, 1);
+            pm1 = p - 1;
+            
+            for ii = 1:2
+                phi0_test = phi0_candidates(ii);
+                
+                % Inline kernel at phi root
+                srfvec_phi = [at_star * cos(phi0_test), at_star * sin(phi0_test), ct_star];
+                nvec_phi = [-dcdt_star * at_star * cos(phi0_test), ...
+                            -dcdt_star * at_star * sin(phi0_test), ...
+                             dadt_star * at_star];
+                r_phi = srfvec_phi - target;
+                rq = sum(r_phi .* q_phi);
+                rn = sum(r_phi .* nvec_phi);
+                fp0t = -6 * max(abs(r_phi * (rq * rn)));
                 
                 % Integration
                 est_const = abs(2 / gamma(p) * fp0t * Gphi^(-p));
-                ds = xlag / C_TZ;
                 
-                dtpos = phi0_test + dp0fun(ds) - dp0fun(0);
-                dtneg = phi0_test + dp0fun(-ds) - dp0fun(0);
+                dtpos = phi0_test + dp0_pos - dp0_ref;
+                dtneg = phi0_test + dp0_neg - dp0_ref;
                 
-                % Trapezoidal error function
-                int_pos = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtpos, grid.nph, p-1);
-                int_neg = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtneg, grid.nph, p-1);
+                int_pos = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtpos, grid.nph, pm1);
+                int_neg = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtneg, grid.nph, pm1);
                 
                 estTZ_both(ii) = est_const * sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_TZ);
             end
             
-            % Take minimum over +/- imaginary part
             estTZ = min(estTZ_both);
             if isnan(estTZ); estTZ = 0; end
-        end
-        
-        function estGL = computeThetaEstimateDirect(geometry, grid, target, phi_star, t0, Gtheta, p, dt0fun, C_GL, xlag, wlag, imap, dfac, q_density)
-            % COMPUTETHETAESTIMATEDIRECT Error estimate from theta direction with given density
-            %
-            % Like computeThetaEstimate but uses the interpolated density q_density
-            % instead of unit vectors. Returns a scalar.
             
-            % Check both +/- imaginary parts
+            % ===============================================
+            % Theta direction estimate (Gauss-Legendre)
+            % ===============================================
+            ds_theta = xlag / C_GL;
+            dt0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, 0);
+            dt0_pos = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, ds_theta);
+            dt0_neg = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
+                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, -ds_theta);
+            
             t0_candidates = [t0; conj(t0)];
             estGL_both = zeros(2, 1);
             
             for ii = 1:2
                 t0_test = t0_candidates(ii);
                 
-                % Kernel at theta root with actual density
-                ft0p = quadest.errorest.UniformEstimateBuilder.kernelAtThetaRoot(...
-                    geometry, target, t0_test, phi_star, q_density, imap, dfac);
+                % Inline kernel at theta root
+                theta0_test = dfac * (t0_test + 1);
+                at_t0 = geometry.at(theta0_test);
+                ct_t0 = geometry.ct(theta0_test);
+                dadt_t0 = geometry.dadt(theta0_test);
+                dcdt_t0 = geometry.dcdt(theta0_test);
+                
+                srfvec_th = [at_t0 * cos(phi_star), at_t0 * sin(phi_star), ct_t0];
+                nvec_th = dfac * [-dcdt_t0 * at_t0 * cos(phi_star), ...
+                                  -dcdt_t0 * at_t0 * sin(phi_star), ...
+                                   dadt_t0 * at_t0];
+                r_th = srfvec_th - target;
+                rq_th = sum(r_th .* q_theta);
+                rn_th = sum(r_th .* nvec_th);
+                ft0p = -6 * max(abs(r_th * (rq_th * rn_th)));
                 
                 % Integration
                 est_const = abs(2 / gamma(p) * ft0p * Gtheta^(-p));
-                ds = xlag / C_GL;
                 
-                dtpos = t0_test - (dt0fun(ds) - dt0fun(0));
-                dtneg = t0_test - (dt0fun(-ds) - dt0fun(0));
+                dtpos = t0_test - (dt0_pos - dt0_ref);
+                dtneg = t0_test - (dt0_neg - dt0_ref);
                 
-                % Gauss-Legendre error function
-                int_pos = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtpos, grid.nth, p-1);
-                int_neg = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtneg, grid.nth, p-1);
+                int_pos = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtpos, grid.nth, pm1);
+                int_neg = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtneg, grid.nth, pm1);
                 
                 estGL_both(ii) = est_const * sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_GL);
             end
             
-            % Take minimum over +/- imaginary part
             estGL = min(estGL_both);
+            
+            % Combined estimate
+            est = estTZ + estGL;
         end
         
-        function estTZ = computePhiEstimate(geometry, grid, target, theta_star, phi0, Gphi, p, dp0fun, C_TZ, xlag, wlag)
-            % COMPUTEPHIESTIMATE Error estimate from phi direction (trapezoidal)
-            
-            ncomp = 3;
-            
-            % Check both +/- imaginary parts
-            phi0_candidates = [phi0; conj(phi0)];
-            estTZ_both = zeros(2, ncomp);
-            
-            for ii = 1:2
-                phi0_test = phi0_candidates(ii);
-                
-                for c = 1:ncomp
-                    % Unit density for precomputation
-                    density = zeros(1, 3);
-                    density(c) = 1.0;
-                    
-                    % Kernel at phi root
-                    fp0t = quadest.errorest.UniformEstimateBuilder.kernelAtPhiRoot(...
-                        geometry, target, theta_star, phi0_test, density);
-                    
-                    % Integration
-                    est_const = abs(2 / gamma(p) * fp0t * Gphi^(-p));
-                    ds = xlag / C_TZ;
-                    
-                    dtpos = phi0_test + dp0fun(ds) - dp0fun(0);
-                    dtneg = phi0_test + dp0fun(-ds) - dp0fun(0);
-                    
-                    % Trapezoidal error function
-                    int_pos = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtpos, grid.nph, p-1);
-                    int_neg = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtneg, grid.nph, p-1);
-                    
-                    estTZ_both(ii, c) = est_const * sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_TZ);
-                end
-            end
-            
-            % Take minimum over +/- imaginary part
-            estTZ = min(estTZ_both, [], 1);
-            estTZ(isnan(estTZ)) = 0;  % Handle axis case
-        end
-        
-        function estGL = computeThetaEstimate(geometry, grid, target, phi_star, t0, Gtheta, p, dt0fun, C_GL, xlag, wlag, imap, dfac)
-            % COMPUTETHETAESTIMATE Error estimate from theta direction (Gauss-Legendre)
-            
-            ncomp = 3;
-            
-            % Check both +/- imaginary parts
-            t0_candidates = [t0; conj(t0)];
-            estGL_both = zeros(2, ncomp);
-            
-            for ii = 1:2
-                t0_test = t0_candidates(ii);
-                
-                for c = 1:ncomp
-                    % Unit density for precomputation
-                    density = zeros(1, 3);
-                    density(c) = 1.0;
-                    
-                    % Kernel at theta root
-                    ft0p = quadest.errorest.UniformEstimateBuilder.kernelAtThetaRoot(...
-                        geometry, target, t0_test, phi_star, density, imap, dfac);
-                    
-                    % Integration
-                    est_const = abs(2 / gamma(p) * ft0p * Gtheta^(-p));
-                    ds = xlag / C_GL;
-                    
-                    dtpos = t0_test - (dt0fun(ds) - dt0fun(0));
-                    dtneg = t0_test - (dt0fun(-ds) - dt0fun(0));
-                    
-                    % Gauss-Legendre error function
-                    int_pos = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtpos, grid.nth, p-1);
-                    int_neg = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtneg, grid.nth, p-1);
-                    
-                    estGL_both(ii, c) = est_const * sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_GL);
-                end
-            end
-            
-            % Take minimum over +/- imaginary part
-            estGL = min(estGL_both, [], 1);
-        end
-        
-        function fp0t = kernelAtPhiRoot(geometry, target, theta_star, phi0, density)
-            % KERNELATPHIROOT Evaluate stresslet kernel at phi root
+        function val = semiRootEval(r2, r_drdt, drdt2, r_drds, drdt_drds, drds2, dt)
+            % SEMIROOTEVAL Evaluate semi-analytical root from precomputed coefficients
             %
-            % Uses the unnormalized normal n = cross(dr/dtheta, dr/dphi), matching
-            % the legacy kernel_phi0 which captures the 2nd output of element_normal
-            % (the raw cross product, NOT the unit normal).
-            
-            srfvec = geometry.evaluate(theta_star, phi0);
-            
-            % Unnormalized normal: n = cross(drdtheta, drdphi)
-            % For axisymmetric body: n = [-dcdt*at*cos(phi), -dcdt*at*sin(phi), dadt*at]
-            at_val = geometry.at(theta_star);
-            dadt_val = geometry.dadt(theta_star);
-            dcdt_val = geometry.dcdt(theta_star);
-            
-            nvec = [-dcdt_val .* at_val .* cos(phi0), ...
-                    -dcdt_val .* at_val .* sin(phi0), ...
-                    dadt_val .* at_val];
-            
-            r = srfvec - target;
-            rq = sum(r .* density);
-            rn = sum(r .* nvec);
-            f = r * (rq * rn);
-            
-            fp0t = -6 * max(abs(f));
-        end
-        
-        function ft0p = kernelAtThetaRoot(geometry, target, t0, phi_star, density, imap, dfac)
-            % KERNELATTHETAROOT Evaluate stresslet kernel at theta root
-            %
-            % Uses the unnormalized normal n = cross(drdtheta_mapped, drdphi) which
-            % includes the dfac factor from the t->theta mapping chain rule, matching
-            % the legacy kernel_t0 which uses element_normal(t0, phi, a, da, dc, imap, dfac).
-            %
-            % legacy drdtheta_mapped = dfac * [dadt(theta0)*cos(phi), dadt(theta0)*sin(phi), dcdt(theta0)]
-            % so n = dfac * cross([dadt*cos,dadt*sin,dcdt], [-at*sin,at*cos,0])
-            %      = dfac * [-dcdt*at*cos(phi), -dcdt*at*sin(phi), dadt*at]
-            
-            theta0 = imap(t0);
-            srfvec = geometry.evaluate(theta0, phi_star);
-            
-            at_val = geometry.at(theta0);
-            dadt_val = geometry.dadt(theta0);
-            dcdt_val = geometry.dcdt(theta0);
-            
-            % Unnormalized normal including dfac (from t-to-theta mapping)
-            nvec = dfac * [-dcdt_val .* at_val .* cos(phi_star), ...
-                           -dcdt_val .* at_val .* sin(phi_star), ...
-                           dadt_val .* at_val];
-            
-            r = srfvec - target;
-            rq = sum(r .* density);
-            rn = sum(r .* nvec);
-            f = r * (rq * rn);
-            
-            ft0p = -6 * max(abs(f));
+            % Inline replacement for RootFinder.semiRoot closures. Takes the 6
+            % scalar dot-product coefficients and perturbation dt (scalar or vector).
+            aa = r2 + 2*r_drdt*dt + drdt2*dt.^2;
+            bb = 2*r_drds + 2*drdt_drds*dt;
+            val = -bb./(2*drds2) + 1i*sqrt(aa./drds2 - (bb./(2*drds2)).^2);
         end
         
         function knq = trapzErrFunc(z, n, q)

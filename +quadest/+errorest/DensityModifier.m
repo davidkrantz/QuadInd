@@ -40,16 +40,13 @@ classdef DensityModifier
                 theta0 (:,1) = []
             end
             
-            M = size(targets, 1);
             ncomp = size(density, 2);
             
             % Reshape density for easier indexing: [nth × nph × ncomp]
             dens_3d = reshape(density, grid.nth, grid.nph, ncomp);
-            
-            % Find closest quadrature node for each target
-            idx_closest = knnsearch(grid.x, targets);
-            [itheta_star, iphi_star] = grid.ind2sub(idx_closest);
-            
+
+            % Find closest quadrature node using axisymmetric grid structure.
+            [itheta_star,iphi_star] = quadest.errorest.UniformEstimateBuilder.findNearestNodes(grid, targets);
             theta_star = grid.theta(itheta_star);
             phi_star = grid.phi(iphi_star);
             
@@ -65,7 +62,7 @@ classdef DensityModifier
             end
             
             % Evaluate density at theta roots
-            qtheta = quadest.errorest.DensityModifier.interpDensityTheta(grid, dens_3d, theta0, theta_star, iphi_star);
+            qtheta = quadest.errorest.DensityModifier.interpDensityTheta(grid, dens_3d, theta0, iphi_star);
         end
         
         function modifier = computeModifier(qphi, qtheta)
@@ -79,108 +76,91 @@ classdef DensityModifier
         end
     end
     
-    methods (Static, Access = private)
+    methods (Static, Access = {?quadest.errorest.DensityModifier, ?quadest.errorest.UniformEstimateBuilder})
         function [q_interp, intpind] = interpDensityPhi(grid, dens_3d, phi0, itheta)
-            % INTERPDENSITYPHI 2-point linear interpolation in phi direction
+            % INTERPDENSITYPHI Vectorized 2-point linear interpolation in phi direction
             %
             % Evaluates density at complex phi values using linear interpolation
-            % from the two nearest phi grid points.
+            % from the two bracketing phi grid points. Exploits uniform phi
+            % spacing for O(1) bracket finding and uses dphi as the
+            % denominator to correctly handle the periodic boundary.
             
             M = size(phi0, 1);
             ncomp = size(dens_3d, 3);
-            n_intp = 2;  % Number of interpolation points
-            
-            q_interp = zeros(M, ncomp);
-            intpind = zeros(M, n_intp);
-            
-            phi_grid = grid.phi(:);
             nph = grid.nph;
+            dphi = 2*pi / nph;
             
-            for ii = 1:M
-                phi_val = real(phi0(ii));
-                theta_idx = itheta(ii);
+            % Find lower bracket index for real(phi0) in the uniform phi grid.
+            % For phi grid [0, dphi, 2*dphi, ..., (nph-1)*dphi]:
+            iphi_lo = mod(floor(real(phi0) / dphi), nph) + 1;
+            iphi_hi = mod(iphi_lo, nph) + 1;  % next index with periodic wrap
+            intpind = [iphi_lo, iphi_hi];
+            
+            % Fractional position within bracket. Using dphi as denominator
+            % avoids the boundary bug where raw phi(1)-phi(nph) ≈ 6.18
+            % instead of dphi.
+            t = (phi0 - grid.phi(iphi_lo).') ./ dphi;
+            w_lo = 1 - t;
+            w_hi = t;
+            
+            % Extract density values at bracket points for all targets and components
+            q_interp = zeros(M, ncomp);
+            for c = 1:ncomp
+                lin_lo = sub2ind([grid.nth, nph], itheta, iphi_lo);
+                lin_hi = sub2ind([grid.nth, nph], itheta, iphi_hi);
                 
-                % Find two nearest phi points (accounting for periodicity)
-                tmpphi = phi_grid;
-                [~, sorted_idx] = sort(abs(tmpphi - phi_val));
-                
-                % Handle periodicity at boundaries
-                if sorted_idx(1) < n_intp
-                    % Near phi = 0, wrap around
-                    tmpphi_wrapped = tmpphi;
-                    tmpphi_wrapped(end-n_intp+1:end) = tmpphi(end-n_intp+1:end) - 2*pi;
-                    [~, sorted_idx] = sort(abs(tmpphi_wrapped - phi_val));
-                elseif sorted_idx(1) > nph - n_intp
-                    % Near phi = 2*pi, wrap around
-                    tmpphi_wrapped = tmpphi;
-                    tmpphi_wrapped(1:n_intp) = tmpphi(1:n_intp) + 2*pi;
-                    [~, sorted_idx] = sort(abs(tmpphi_wrapped - phi_val));
-                end
-                
-                local_ip = sort(sorted_idx(1:n_intp));
-                intpind(ii, :) = local_ip;
-                
-                % Get phi values for interpolation
-                p_pts = phi_grid(local_ip);
-                
-                % Handle wrapped values for interpolation formula
-                if abs(p_pts(2) - p_pts(1)) > pi
-                    % Wrapped case
-                    if p_pts(1) < pi
-                        p_pts(2) = p_pts(2) - 2*pi;
-                    else
-                        p_pts(1) = p_pts(1) - 2*pi;
-                    end
-                end
-                
-                % 2-point linear interpolation for each component
-                for c = 1:ncomp
-                    q_vals = squeeze(dens_3d(theta_idx, local_ip, c));
-                    % Linear interpolation at complex phi0
-                    q_interp(ii, c) = (q_vals(1) * (p_pts(2) - phi0(ii)) + ...
-                                       q_vals(2) * (phi0(ii) - p_pts(1))) / ...
-                                      (p_pts(2) - p_pts(1));
-                end
+                dens_c = dens_3d(:,:,c);  % [nth × nph]
+                q_interp(:, c) = w_lo .* dens_c(lin_lo) + w_hi .* dens_c(lin_hi);
             end
         end
         
-        function q_interp = interpDensityTheta(grid, dens_3d, theta0, theta_star, iphi)
-            % INTERPDENSITYTHETA 2-point linear interpolation in theta direction
+        function q_interp = interpDensityTheta(grid, dens_3d, theta0, iphi)
+            % INTERPDENSITYTHETA Vectorized 2-point linear interpolation in theta direction
+            %
+            % Finds the true bracketing interval for real(theta0) in the GL
+            % grid and interpolates at the complex theta0 value.
             
             M = size(theta0, 1);
             ncomp = size(dens_3d, 3);
-            n_intp = 2;
+            nth = grid.nth;
+            theta_grid = grid.theta(:);  % descending: theta(1) > ... > theta(nth)
             
+            % Find bracket: index k such that theta(k) >= real(theta0) >= theta(k+1).
+            % Since GL nodes descend, count how many exceed real(theta0).
+            k = sum(theta_grid.' > real(theta0), 2);  % [M×1]
+            k = max(k, 1);
+            k = min(k, nth - 1);
+            idx_hi = k;        % theta_grid(idx_hi) >= real(theta0)
+            idx_lo = k + 1;    % theta_grid(idx_lo) <= real(theta0)
+            
+            % Theta values at bracket endpoints
+            t_hi = theta_grid(idx_hi);  % larger theta value
+            t_lo = theta_grid(idx_lo);  % smaller theta value
+            
+            % Interpolation weights
+            denom = t_hi - t_lo;  % always positive for valid brackets
+            small_denom = abs(denom) < eps;
+            denom(small_denom) = 1;  % avoid division by zero
+            
+            w_hi = (theta0 - t_lo) ./ denom;
+            w_lo = (t_hi - theta0) ./ denom;
+            
+            % For degenerate intervals, use the hi-index value
+            w_hi(small_denom) = 1;
+            w_lo(small_denom) = 0;
+            
+            % Extract density values at bracket points for all targets
             q_interp = zeros(M, ncomp);
-            theta_grid = grid.theta(:);
-            
-            for ii = 1:M
-                theta_val = theta_star(ii);
-                phi_idx = iphi(ii);
+            for c = 1:ncomp
+                dens_c = dens_3d(:,:,c);  % [nth × nph]
+                lin_hi = sub2ind([nth, grid.nph], idx_hi, iphi);
+                lin_lo = sub2ind([nth, grid.nph], idx_lo, iphi);
                 
-                % Find two nearest theta points
-                [~, sorted_idx] = mink(abs(theta_grid - theta_val), n_intp);
-                local_it = sort(sorted_idx);
-                
-                t_pts = theta_grid(local_it);
-                
-                % 2-point linear interpolation for each component
-                for c = 1:ncomp
-                    q_vals = squeeze(dens_3d(local_it, phi_idx, c));
-                    
-                    % Linear interpolation at complex theta0
-                    denom = t_pts(2) - t_pts(1);
-                    if abs(denom) < eps
-                        q_interp(ii, c) = q_vals(1);
-                    else
-                        q_interp(ii, c) = (q_vals(1) * (t_pts(2) - theta0(ii)) + ...
-                                           q_vals(2) * (theta0(ii) - t_pts(1))) / denom;
-                    end
-                end
-                
-                % Handle NaN (can occur for theta0 at poles)
-                q_interp(isnan(q_interp)) = 0;
+                q_interp(:, c) = w_hi .* dens_c(lin_hi) + w_lo .* dens_c(lin_lo);
             end
+            
+            % Handle NaN (can occur for theta0 at poles)
+            q_interp(isnan(q_interp)) = 0;
         end
     end
 end
