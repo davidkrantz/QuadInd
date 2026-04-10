@@ -99,15 +99,15 @@ classdef Plotting
             hold off;
         end
         
-        function plotErrorVsDistance(u, uref, targets, surfacePoints, classification, tol, varargin)
+        function plotErrorVsDistance(u, uref, targets, gridSurf, classification, tol, varargin)
             % PLOTERRORVSDISTANCE Scatter plot of error vs distance from surface
             %
-            %   plotErrorVsDistance(u, uref, targets, surfacePoints, classification, tol)
+            %   plotErrorVsDistance(u, uref, targets, gridSurf, classification, tol)
             %
             % Inputs:
             %   u, uref       - Computed and reference solutions [M×3]
             %   targets       - Target points [M×3]
-            %   surfacePoints - Surface points [N×3] from grid.x
+            %   gridSurf      - Grid object containing surface points
             %   classification - Struct with .masks, .isSQ
             %   tol           - Tolerance for horizontal line
             %
@@ -123,8 +123,10 @@ classdef Plotting
             err = sqrt(sum((u - uref).^2, 2));
             
             % Compute distance to nearest surface point
-            idx = knnsearch(surfacePoints, targets);
-            dist = sqrt(sum((targets - surfacePoints(idx, :)).^2, 2));
+            [itheta,iphi] = quadest.errorest.UniformEstimateBuilder.findNearestNodes(gridSurf, targets);
+            % Linear index into grid.x:
+            idx = (iphi - 1) * gridSurf.nth + itheta;
+            dist = sqrt(sum((targets - gridSurf.x(idx, :)).^2, 2));
             
             nfac = length(classification.masks);
             
@@ -250,6 +252,64 @@ classdef Plotting
                 mask_ext, geom, levels, FS, p.Results.uniformEstimates);
         end
         
+        function plotSurfaceMesh(gridOrGeom, varargin)
+            % PLOTSURFACEMESH 3-D surface mesh of the particle surface
+            %
+            %   plotSurfaceMesh(grid)
+            %   plotSurfaceMesh(geom)
+            %   plotSurfaceMesh(geom, 'nth', 40, 'nph', 60)
+            %   plotSurfaceMesh(..., 'FaceColor', [0.8 0.8 0.8], 'EdgeColor', 'k')
+            %
+            % Inputs:
+            %   gridOrGeom - AxsymGrid object, OR any AxsymGeometry object.
+            %                When a geometry is supplied a default GL×trap grid
+            %                with nth=40, nph=60 (or values passed via 'nth'/'nph')
+            %                is created internally.
+            %
+            % Options:
+            %   'nth'       - Theta points when gridOrGeom is a geometry (default: 40)
+            %   'nph'       - Phi points when gridOrGeom is a geometry (default: 60)
+            %   'FaceColor' - surf FaceColor (default: 0.8*[1 1 1])
+            %   'EdgeColor' - surf EdgeColor (default: [0.3 0.3 0.3])
+            %   'FaceAlpha' - surf FaceAlpha (default: 1)
+
+            p = inputParser;
+            addParameter(p, 'nth',       40);
+            addParameter(p, 'nph',       60);
+            addParameter(p, 'FaceColor', 0.8*[1 1 1]);
+            addParameter(p, 'EdgeColor', [0.3 0.3 0.3]);
+            addParameter(p, 'FaceAlpha', 1);
+            parse(p, varargin{:});
+
+            % Resolve grid
+            if isa(gridOrGeom, 'quadest.grid.AxsymGrid')
+                g = gridOrGeom;
+            else
+                % Geometry supplied — build a temporary grid
+                g = quadest.grid.AxsymGrid(gridOrGeom, ...
+                    'nth', p.Results.nth, 'nph', p.Results.nph);
+            end
+
+            nth = g.nth;
+            nph = g.nph;
+
+            % Reshape into (nth × nph) matrices
+            X = reshape(g.x(:,1), nth, nph);
+            Y = reshape(g.x(:,2), nth, nph);
+            Z = reshape(g.x(:,3), nth, nph);
+
+            % Wrap azimuthally so the surface closes
+            X = [X, X(:,1)];
+            Y = [Y, Y(:,1)];
+            Z = [Z, Z(:,1)];
+
+            surf(X, Y, Z, ...
+                'FaceColor', p.Results.FaceColor, ...
+                'EdgeColor', p.Results.EdgeColor, ...
+                'FaceAlpha', p.Results.FaceAlpha);
+            axis equal;
+        end
+
         function drawGeometryOutline(geom, varargin)
             % DRAWGEOMETRYOUTLINE Draw the geometry cross-section at y=0
             %

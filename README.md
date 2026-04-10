@@ -46,6 +46,7 @@ estimates = estimator.evaluate(targets, density);
 ├── +geometry/          # Axisymmetric geometry definitions
 │   ├── AxsymGeometry.m # Abstract base class
 │   ├── Spheroid.m      # Prolate/oblate spheroid
+│   ├── Capsule.m       # Capsule shape
 │   ├── Peanut.m        # Peanut shape
 │   └── CustomAxsym.m   # User-defined parameterization (function handles)
 ├── +kernel/            # Layer potential kernels
@@ -110,7 +111,7 @@ results = quadest.test.TestLegacyComparison().run();
 
 ## Requirements
 
-- Statistics and Machine Learning Toolbox (`knnsearch`) — used for nearest-neighbour queries in error estimation and density interpolation
+- Statistics and Machine Learning Toolbox (`knnsearch`) — used only in `TestLegacyComparison.m`; the core error estimation and density interpolation paths use a parametric nearest-node approach and do **not** require this toolbox
 
 ## Adding New Geometries
 
