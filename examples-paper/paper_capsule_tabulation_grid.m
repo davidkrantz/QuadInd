@@ -9,11 +9,11 @@ scriptDir = fileparts(mfilename('fullpath'));
 projectDir = fileparts(scriptDir);
 addpath(projectDir);
 
-savefig = 0;
+savefig = 1;
 FS = 16;
 
-nth = 40;
-nph = 60;
+nth = 50;
+nph = 40;
 
 geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
 

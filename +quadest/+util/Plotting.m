@@ -208,11 +208,13 @@ classdef Plotting
             addParameter(p, 'levels', 0:-2:-10);
             addParameter(p, 'FontSize', 16);
             addParameter(p, 'upsampFactors', []);
+            addParameter(p, 'showLabels', true);
             parse(p, varargin{:});
             
             levels        = p.Results.levels;
             FS            = p.Results.FontSize;
             upsampFactors = p.Results.upsampFactors;
+            showLabels    = p.Results.showLabels;
             
             if iscell(error)
                 % Multi-factor mode: one subplot per upsampling factor
@@ -241,7 +243,7 @@ classdef Plotting
                     end
                     
                     quadest.util.Plotting.plotSingleFactor_(xv, zv, error{k}, est_k, ...
-                        mask_ext, geom, levels, FS);
+                        mask_ext, geom, levels, FS, showLabels);
                     title(titleStr, 'FontSize', FS);
                 end
                 return;
@@ -249,7 +251,7 @@ classdef Plotting
             
             % Single-factor mode (original behaviour)
             quadest.util.Plotting.plotSingleFactor_(xv, zv, error, estimates, ...
-                mask_ext, geom, levels, FS, p.Results.uniformEstimates);
+                mask_ext, geom, levels, FS, showLabels);
         end
         
         function plotSurfaceMesh(gridOrGeom, varargin)
@@ -272,6 +274,7 @@ classdef Plotting
             %   'FaceColor' - surf FaceColor (default: 0.8*[1 1 1])
             %   'EdgeColor' - surf EdgeColor (default: [0.3 0.3 0.3])
             %   'FaceAlpha' - surf FaceAlpha (default: 1)
+            %   'FlipYZ'    - If true, plot with Y and Z swapped (for horizontal orientation)
 
             p = inputParser;
             addParameter(p, 'nth',       40);
@@ -279,6 +282,7 @@ classdef Plotting
             addParameter(p, 'FaceColor', 0.8*[1 1 1]);
             addParameter(p, 'EdgeColor', [0.3 0.3 0.3]);
             addParameter(p, 'FaceAlpha', 1);
+            addParameter(p, 'FlipYZ',    false);
             parse(p, varargin{:});
 
             % Resolve grid
@@ -302,6 +306,13 @@ classdef Plotting
             X = [X, X(:,1)];
             Y = [Y, Y(:,1)];
             Z = [Z, Z(:,1)];
+
+            if p.Results.FlipYZ
+                % Swap Y and Z for horizontal orientation
+                temp = Y;
+                Y = Z;
+                Z = temp;
+            end
 
             surf(X, Y, Z, ...
                 'FaceColor', p.Results.FaceColor, ...
@@ -465,7 +476,7 @@ classdef Plotting
     end
     
     methods (Static, Access = private)
-        function plotSingleFactor_(xv, zv, error, estimates, mask_ext, geom, levels, FS, estuni)
+        function plotSingleFactor_(xv, zv, error, estimates, mask_ext, geom, levels, FS, showLabels)
             % PLOTSINGLEFACTOR_ Core single-factor error contour plot (private helper)
             %
             % Plots a filled contour of the quadrature error overlaid with line
@@ -479,12 +490,8 @@ classdef Plotting
             %   geom      - AxsymGeometry object
             %   levels    - Contour levels
             %   FS        - Font size
-            %   estuni    - (optional) [M×1] uniform estimates for green dashed overlay
-            
-            if nargin < 9
-                estuni = [];
-            end
-            
+            %   showLabels - Boolean flag to show contour labels
+
             M = numel(xv);
             N = numel(zv);
             
@@ -515,26 +522,13 @@ classdef Plotting
             hold on;
             
             % Line contour of estimates (black solid)
-            [C, h] = contour(X, Z, Est, levels(2:end), '-k', 'LineWidth', 2);
-            clabel(C, h, 'LabelSpacing', 1150, 'FontSize', 14);
-            
-            legendEntries = {'Quadrature Error', 'Error Estimate'};
-            
-            % Optional: uniform estimates overlay (green dashed)
-            if ~isempty(estuni)
-                estuni_full = NaN(numel(mask_ext), 1);
-                estuni_full(mask_ext) = log10(abs(estuni) + eps);
-                Estuni = reshape(estuni_full, M, N);
-                Estuni(Estuni < minLevel) = minLevel;
-                Estuni(isinf(Estuni)) = -16;
-                
-                [C2, h2] = contour(X, Z, Estuni, levels, '--g', 'LineWidth', 2);
-                clabel(C2, h2, 'LabelSpacing', 300, 'Color', 'green', 'FontSize', 14);
-                legendEntries{3} = 'Uniform Estimate';
+            [C, h] = contour(X, Z, Est, levels(2:end), '-k', 'LineWidth', 1.5);
+            if showLabels
+                clabel(C, h, 'LabelSpacing', 550, 'FontSize', FS, 'Interpreter', 'latex');
             end
             
-            % Draw geometry outline
-            quadest.util.Plotting.drawGeometryOutline(geom);
+            % Draw surface mesh
+            quadest.util.Plotting.plotSurfaceMesh(geom,'FlipYZ', true);
             
             view(0, 90);
             axis equal;
@@ -549,10 +543,7 @@ classdef Plotting
             % Colormap
             colormap(gca, quadest.util.Plotting.divergingColormap(length(levels) - 1));
             
-            % Legend
-            lgd = legend(legendEntries, 'Interpreter', 'latex', 'Location', 'southwest');
-            lgd.FontSize = 15;
-            
+            % Labels
             xlabel('$x$', 'Interpreter', 'latex', 'FontSize', FS);
             ylabel('$z$', 'Interpreter', 'latex', 'FontSize', FS);
             set(gca, 'FontSize', FS);

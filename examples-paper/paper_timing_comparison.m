@@ -1,6 +1,6 @@
-% paper_timing_comparison.m - Timing comparison: tabulated vs direct evaluation paper
+% paper_timing_comparison.m - Timing comparison: tabulated vs direct evaluation
 
-% Setup
+%% Setup
 clear; close all;
 set(groot,'defaultAxesTickLabelInterpreter','latex');
 set(groot,'defaulttextinterpreter','latex');
@@ -10,30 +10,32 @@ projectDir = fileparts(scriptDir);
 addpath(projectDir);
 
 % Parameters
-nth = 40;
+nth = 50;
 nph = 40;
 upsamp_fac = 1;
-savefig = 0;
 
 % Target counts for the sweep
 nTargets = logspace(1,5,20);
 nRepeats = 3;  % Timing repeats per measurement (take median)
 
 M_pool = 500;  % Grid resolution for generating the target pool
-FS = 16;
+M_contour = 200;  % Grid resolution for contour plot
+ref_upsamp = 10;  % Upsampling factor for reference solution
 
-% Geometry & kernel
+FS = 16;
+savefig = 0;
+
+%% Geometry & kernel
 fprintf('=== TIMING COMPARISON: TABULATED vs DIRECT ===\n\n');
 
 geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
-%geom = quadest.geometry.Spheroid('a', 0.05, 'c', 0.1);
 kernel = quadest.kernel.StokesStresslet();
 
 fprintf('Geometry: Capsule (R = 1, L = 6, kappa = 3)\n');
 fprintf('Kernel:   %s (p = %.1f)\n', kernel.kernelName(), kernel.singularityOrder());
 fprintf('Grid:     %d x %d = %d nodes\n\n', nth, nph, nth*nph);
 
-% Precompute error estimates (timed)
+%% Precompute error estimates (timed)
 fprintf('Precomputing error estimates...\n');
 tic;
 estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
@@ -43,21 +45,21 @@ estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
 t_precomp = toc;
 fprintf('  Precomputation time: %.2f s\n', t_precomp);
 
-grid_est = estimator.getGrid();
-Nb = grid_est.numPoints();
+grid_surf = estimator.getGrid();
+Nb = grid_surf.numPoints();
 
 % Define oscillatory density
-[theta_mat, phi_mat] = grid_est.meshgrid();
+[theta_mat, phi_mat] = grid_surf.meshgrid();
 
-sigma1 = 2.1 + sin(8*theta_mat) + sin(12*phi_mat);
-sigma2 = 2 + sin(6*theta_mat) .* cos(6*phi_mat);
+sigma1 = 2.1 + sin(theta_mat);
+sigma2 = 2 + sin(2*theta_mat) .* cos(phi_mat);
 sigma3 = sin(5*theta_mat) .* exp(-cos(phi_mat).^2) + 1.03;
 density = [sigma1(:), sigma2(:), sigma3(:)];
 
 % Create large pool of exterior target points
-fprintf('\nCreating target pool (%d x %d grid_est)...\n', M_pool, M_pool);
-xv = linspace(-1.5 * geom.maxRadius(), 1.5 * geom.maxRadius(), M_pool);
-zv = linspace(-1.5 * geom.maxHeight(), 1.5 * geom.maxHeight(), M_pool);
+fprintf('\nCreating target pool (%d x %d grid_surf)...\n', M_pool, M_pool);
+xv = linspace(-2.5, 2.5, M_pool);
+zv = linspace(-4, 4, M_pool);
 [X, Z] = meshgrid(xv, zv);
 targets_pool = [X(:), zeros(M_pool^2, 1), Z(:)];
 
@@ -65,9 +67,17 @@ mask_ext = geom.isExterior(targets_pool);
 targets_pool = targets_pool(mask_ext, :);
 nPool = size(targets_pool, 1);
 
+% Create points for contour plot
+fprintf('\nCreating contour points (%d x %d grid_est)...\n', M_contour, M_contour);
+xv = linspace(-2.5, 2.5, M_contour);
+zv = linspace(-4, 4, M_contour);
+[X, Z] = meshgrid(xv, zv);
+contour_points = [X(:), zeros(M_contour^2, 1), Z(:)];
+mask_ext_contour = geom.isExterior(contour_points);
+
 fprintf('  Pool size: %d exterior targets\n', nPool);
 
-% Timing sweep
+%% Timing sweep
 allCounts = nTargets;
 allCounts = allCounts(allCounts <= nPool);
 
@@ -124,8 +134,18 @@ if any(mask_valid_both)
 end
 fprintf('\n');
 
-% Plot: log-log timing comparison
+%% Compute error at all targets for final tabulated and direct estimates (for plotting)
+fprintf('Computing errors for final tabulated and direct estimates...\n');
+est_tab = estimator.evaluate(contour_points(mask_ext_contour, :), density);
+est_dir = estimator.evaluateDirect(contour_points(mask_ext_contour, :), density);
+u_dir = kernel.evaluateOnGrid(contour_points(mask_ext_contour, :), grid_surf, density);
+u_ref = kernel.evaluateUpsampled(contour_points(mask_ext_contour, :), grid_surf, density, ref_upsamp);
+u_err = sqrt(sum((u_dir - u_ref).^2, 2));
+
+%% Plot: log-log timing comparison
 close all;
+
+figure;
 figure('DefaultAxesFontSize',FS);
 
 % Tabulated (blue circles + line)
@@ -153,12 +173,38 @@ ylabel('Time (s)', 'FontSize', FS,'Interpreter', 'latex');
 legend({'Tabulated', 'Direct', 'Precomputation'}, ...
     'Interpreter', 'latex', 'Location', 'northwest', 'FontSize', 14);
 grid on;
-annotation('textarrow',[0.744 0.65],[0.55 0.615],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
+annotation('textarrow',[0.44 0.5],[0.6 0.53],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
+%annotation('textarrow',[0.744 0.65],[0.55 0.615],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
+
+% Vertical speedup arrow at last valid data point
+speedup_factor = t_direct(end) / t_tabulated(end);
+x_arrow = allCounts(end);
+y_tab = t_tabulated(end);
+y_dir = t_direct(end);
+% Convert to normalized figure coordinates for annotation arrow
+ax = gca;
+x_norm = log10(x_arrow / xlims(1)) / (log10(xlims(2) / xlims(1)));
+y_tab_norm = (log10(y_tab) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
+y_dir_norm = (log10(y_dir) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
+annotation('doublearrow',[x_norm, x_norm]-0.108, [y_dir_norm, y_tab_norm]+0.161);
+text(48000,0.7,[num2str(round(speedup_factor)) '$\times$'], 'FontSize', FS, 'Interpreter', 'latex', ...
+    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
 set(gca, 'FontSize', FS);
+
+% Plot contour of error for tabulated and direct estimates
+figure('DefaultAxesFontSize',FS);
+quadest.util.Plotting.plotErrorContour(xv, zv, u_err, est_tab, mask_ext_contour, geom, 'showLabels', false);
+figure('DefaultAxesFontSize',FS);
+quadest.util.Plotting.plotErrorContour(xv, zv, u_err, est_dir, mask_ext_contour, geom , 'showLabels', false);
+
+close(1);
+alignfigs;
 
 if savefig
     if ~exist('../figs', 'dir'); mkdir('../figs'); end
     disp('saving figures...');
-    exportgraphics(figure(1),'../figs/capsule_timing_comparison.pdf','Resolution',400);
+    exportgraphics(figure(2),'../figs/capsule_timing_comparison.pdf','Resolution',400);
+    exportgraphics(figure(3),'../figs/capsule_contour_tabulated.pdf','Resolution',1000);
+    exportgraphics(figure(4),'../figs/capsule_contour_direct.pdf','Resolution',1000);
     disp('sucessfully saved figures');
 end
