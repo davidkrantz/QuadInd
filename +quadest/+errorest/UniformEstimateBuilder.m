@@ -631,12 +631,22 @@ classdef UniformEstimateBuilder
         function knq = glErrFunc(z, n, q)
             % GLERRFUNC q-th derivative of Gauss-Legendre error function
             
-            % Transform to first quadrant
+            % Transform to first quadrant (real part)
             z = abs(real(z)) + 1i * imag(z);
             
-            knq = 2 * pi ./ (z + sqrt(z.^2 - 1)).^(2*n + 1);
+            % Joukowski map: rho = z + sqrt(z^2 - 1)
+            % For z on/near the imaginary axis with imag(z) < 0, the
+            % principal branch can give |rho| < 1, leading to a spurious
+            % blow-up.  The two branches rho and 1/rho are reciprocals;
+            % always choose the one with |rho| >= 1.
+            sq = sqrt(z.^2 - 1);
+            rho = z + sq;
+            flip = abs(rho) < 1;
+            rho(flip) = z(flip) - sq(flip);
+            
+            knq = 2 * pi ./ rho.^(2*n + 1);
             if q ~= 0
-                knq = knq .* (-(2*n + 1) ./ sqrt(z.^2 - 1)).^q;
+                knq = knq .* (-(2*n + 1) ./ sq).^q;
             end
             
             knq = abs(knq);
