@@ -20,7 +20,7 @@ c = 0.5;
 center2 = [0, 0, 1.0025];  % Center of body 2
 
 % Reference and evaluation
-refFactor = 5;
+refFactor = 15;
 
 % Target grid
 Ngrid = 300;
@@ -98,10 +98,6 @@ u2_direct = kernel.evaluateOnGrid(targets_ext_shifted, grid, density2);
 fprintf('  Body 2: reference (factor %d)...\n', refFactor);
 u2_ref = kernel.evaluateUpsampled(targets_ext_shifted, grid, density2, refFactor);
 fprintf('  Kernel evaluation time: %.2f s\n', toc);
-%%
-% Per-body error (max over 3 components for scalar per target)
-%err1 = max(abs(u1_direct - u1_ref), [], 2);
-%err2 = max(abs(u2_direct - u2_ref), [], 2);
 
 err1 = sum((u1_direct-u1_ref).^2,2).^(1/2);
 err2 = sum((u2_direct-u2_ref).^2,2).^(1/2);
@@ -167,18 +163,19 @@ for ip = 1:2
 
     if ip == 2
         figure(1);
-        [C, h] = contour(fliplr(X),Z,fliplr(Est),levels(2:end), '--', 'Color', [0.2 0.8 0.2], 'LineWidth', 2);
-        clabel(C, h, 'LabelSpacing', 50000, 'FontSize', 14, 'Color', [0.2 0.8 0.2], 'Interpreter', 'latex');
+        col2 = [1 0 1];
+        [C, h] = contour(fliplr(X),Z,fliplr(Est),levels(2:end), '--', 'Color', col2, 'LineWidth', 2);
+        clabel(C, h, 'LabelSpacing', 50000, 'FontSize', 14, 'Color', col2, 'Interpreter', 'latex');
         h1 = plot(nan, nan, 'k-',  'LineWidth', 2); hold on;
-        h2 = plot(nan, nan, '--', 'Color', [0.2 0.8 0.2], 'LineWidth', 2);
+        h2 = plot(nan, nan, '--', 'Color', col2, 'LineWidth', 2);
         legend([h1, h2], {'With density modifier', 'Without density modifier'}, ...
-            'Interpreter', 'latex', 'Location', 'southwest', 'FontSize', FS);
+            'Interpreter', 'latex', 'Location', 'south', 'FontSize', FS);
         figure(2);
     end
 
     % Colorbar
     cbar = colorbar('Ticks', fliplr(levels), 'TickLabelInterpreter', 'latex', 'FontSize', FS);
-    xlabel(cbar, '$\log_{10}(\textrm{Absolute error})$', 'FontSize', FS, 'Interpreter', 'latex');
+    xlabel(cbar, '$\log_{10}(\textrm{Error})$', 'FontSize', FS, 'Interpreter', 'latex');
 
     % Colormap
     colormap(gca, quadest.util.Plotting.divergingColormap(length(levels) - 1));
@@ -211,10 +208,47 @@ for ip = 1:2
     set(gca, 'FontSize', FS);
 end
 
+% Plot second sheroid (shifted)
+X1 = reshape(grid.x(:,1), nth, nph);
+Y1 = reshape(grid.x(:,2), nth, nph);
+Z1 = reshape(grid.x(:,3), nth, nph);
+Z2 = Z1 + center2(3);
+X2 = [X1, X1(:,1)];
+Y2 = [Y1, Y1(:,1)];
+Z2 = [Z2, Z2(:,1)];
+Z1 = [Z1, Z1(:,1)];
+
+% Choose density quantity to display (e.g. magnitude)
+dens_mag1 = sqrt(sum(density1.^2, 2));
+dens_mat1 = reshape(dens_mag1, nth, nph);
+dens_wrapped1 = [dens_mat1, dens_mat1(:, 1)];
+dens_mag2 = sqrt(sum(density2.^2, 2));
+dens_mat2 = reshape(dens_mag2, nth, nph);
+dens_wrapped2 = [dens_mat2, dens_mat2(:, 1)];
+figure;
+surf(X2, Z1, Y2, ...
+    'CData', (dens_wrapped1+eps), ...
+    'FaceColor', 'interp', ...
+    'EdgeColor', 'none', ...
+    'FaceAlpha', 1);
+hold on;
+surf(X2, Z2, Y2, ...
+    'CData', (dens_wrapped2+eps), ...
+    'FaceColor', 'interp', ...
+    'EdgeColor', 'none', ...
+    'FaceAlpha', 1);
+colormap(gca, parula);
+colorbar;
+view(0, 90);
+xlabel('$x$', 'Interpreter', 'latex', 'FontSize', FS);
+ylabel('$z$', 'Interpreter', 'latex', 'FontSize', FS);
+set(gca, 'FontSize', FS);
+axis equal;
+
 if savefig
     if ~exist('../figs', 'dir'); mkdir('../figs'); end
     disp('saving figures...');
-    exportgraphics(figure(1),'../figs/capsule_density_comparison.pdf','Resolution',800);
+    exportgraphics(figure(1),'../figs/spheroids_density_comparison.pdf','Resolution',800);
     disp('sucessfully saved figures');
 end
 

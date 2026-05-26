@@ -538,7 +538,7 @@ classdef Plotting
             
             % Colorbar
             cbar = colorbar('Ticks', fliplr(levels), 'TickLabelInterpreter', 'latex', 'FontSize', FS);
-            xlabel(cbar, '$\log_{10}(\textrm{Absolute error})$', 'FontSize', FS, 'Interpreter', 'latex');
+            xlabel(cbar, '$\log_{10}(\textrm{Error})$', 'FontSize', FS, 'Interpreter', 'latex');
             
             % Colormap
             colormap(gca, quadest.util.Plotting.divergingColormap(length(levels) - 1));

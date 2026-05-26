@@ -20,13 +20,13 @@ addpath(projectDir);
 
 %% User Parameters
 % -------------------------------------------------------------------------
-% Geometry selection: 'spheroid' or 'peanut'
-geometryShape = 'spheroid';
+% Geometry selection: 'spheroid', 'peanut', or 'capsule'
+geometryShape = 'capsule';
 
 % Density flag:
 %   0 = Stresslet identity (constant density) → reference is zero
 %   1 = Analytic density → reference via high upsampling
-dflag = 0;
+dflag = 1;
 
 % Tolerance for classification
 TOL = 1e-6;
@@ -36,13 +36,13 @@ upsamp_fac = 2:4;
 
 % Discretization (number of quadrature points)
 nth = 40;   % Theta (Gauss-Legendre) points
-nph = 60;   % Phi (trapezoidal) points
+nph = 40;   % Phi (trapezoidal) points
 
 % Reference upsampling factor (for dflag = 1)
-refFactor = 20;
+refFactor = 10;
 
 % Special quadrature placeholder factor (high upsampling)
-sqFactor = 10;
+sqFactor = 5;
 
 % Plot settings
 FS = 16;  % Font size
@@ -65,6 +65,12 @@ switch lower(geometryShape)
         M = 100; L = 5;
         xv = linspace(-L/1.5, L/1.5, M);
         zv = linspace(-L, L, M);
+    case 'capsule'
+        geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
+        % Grid bounds for capsule: slightly beyond R and L/2
+        M = 100;
+        xv = linspace(-4*geom.maxRadius(), 4*geom.maxRadius(), M);
+        zv = linspace(-1.5*geom.maxHeight(), 1.5*geom.maxHeight(), M);
     otherwise
         error('Unknown geometry: %s', geometryShape);
 end
@@ -86,7 +92,7 @@ estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
     'interpolateRoots', true);
 fprintf('  Precomputation time: %.2f seconds\n', toc);
 
-grid = estimator.getGrid();
+grid_surf = estimator.getGrid();
 
 % Get the actual upsampling factors used (includes factor 1 for direct quad)
 allUpsampFactors = estimator.upsampFactors;
@@ -109,7 +115,7 @@ fprintf('  Exterior points: %d\n', sum(mask_ext));
 %% Step 5: Define density
 fprintf('\nStep 5: Define density\n');
 
-[theta_mat, phi_mat] = grid.meshgrid();
+[theta_mat, phi_mat] = grid_surf.meshgrid();
 
 switch dflag
     case 1  % Analytic density
@@ -119,7 +125,7 @@ switch dflag
         density = [sigma1(:), sigma2(:), sigma3(:)];
         densityType = 'Analytic';
     otherwise  % Stresslet identity
-        Nb = grid.numPoints();
+        Nb = grid_surf.numPoints();
         density = [300*ones(Nb,1), 100*ones(Nb,1), 200*ones(Nb,1)];
         densityType = 'Stresslet Identity (constant)';
 end
@@ -159,13 +165,13 @@ tic;
 for k = 1:length(allUpsampFactors)
     mask_k = classification.masks{k};
     if any(mask_k)
-        u(mask_k, :) = kernel.evaluateUpsampled(targets(mask_k, :), grid, density, allUpsampFactors(k));
+        u(mask_k, :) = kernel.evaluateUpsampled(targets(mask_k, :), grid_surf, density, allUpsampFactors(k));
     end
 end
 
 % Special quadrature region (placeholder: use high upsampling)
 if any(classification.isSQ)
-    u(classification.isSQ, :) = kernel.evaluateUpsampled(targets(classification.isSQ, :), grid, density, sqFactor);
+    u(classification.isSQ, :) = kernel.evaluateUpsampled(targets(classification.isSQ, :), grid_surf, density, sqFactor);
 end
 
 fprintf('  Computation time: %.2f seconds\n', toc);
@@ -176,7 +182,7 @@ fprintf('\nStep 8: Compute reference solution\n');
 tic;
 switch dflag
     case 1  % Analytic density → use high upsampling
-        uref = kernel.evaluateUpsampled(targets, grid, density, refFactor);
+        uref = kernel.evaluateUpsampled(targets, grid_surf, density, refFactor);
         fprintf('  Reference: High upsampling (factor = %d)\n', refFactor);
     otherwise  % Stresslet identity → zero solution
         uref = zeros(size(u));
@@ -195,7 +201,7 @@ error_vec = sqrt(sum((u - uref).^2, 2));
 fprintf('  Computing per-factor errors...\n');
 errors_cell = cell(1, length(allUpsampFactors));
 for k = 1:length(allUpsampFactors)
-    u_k = kernel.evaluateUpsampled(targets, grid, density, allUpsampFactors(k));
+    u_k = kernel.evaluateUpsampled(targets, grid_surf, density, allUpsampFactors(k));
     errors_cell{k} = sqrt(sum((u_k - uref).^2, 2));
 end
 
@@ -232,7 +238,7 @@ title(sprintf('Quadrature Regions (tol = %.0e)', TOL), 'FontSize', FS);
 
 %% Figure 2: Error vs Distance
 figure('Name', 'Error vs Distance');
-quadest.util.Plotting.plotErrorVsDistance(u, uref, targets, grid.x, classification, TOL, 'FontSize', FS);
+quadest.util.Plotting.plotErrorVsDistance(u, uref, targets, grid_surf, classification, TOL, 'FontSize', FS);
 
 %% Figure 3: Error contour per upsampling factor
 % Each panel shows the actual error using that factor + its estimated error
