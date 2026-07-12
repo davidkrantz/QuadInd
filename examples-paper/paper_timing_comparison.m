@@ -11,16 +11,16 @@ addpath(projectDir);
 
 % Parameters
 nth = 50;
-nph = 40;
+nph = 50;
 upsamp_fac = 1;
 
 % Target counts for the sweep
-nTargets = logspace(1,5,20);
+nTargets = logspace(2,5,20);
 nRepeats = 3;  % Timing repeats per measurement (take median)
 
 M_pool = 500;  % Grid resolution for generating the target pool
 M_contour = 200;  % Grid resolution for contour plot
-ref_upsamp = 10;  % Upsampling factor for reference solution
+ref_upsamp = 8;  % Upsampling factor for reference solution
 
 FS = 16;
 savefig = 0;
@@ -48,18 +48,32 @@ fprintf('  Precomputation time: %.2f s\n', t_precomp);
 grid_surf = estimator.getGrid();
 Nb = grid_surf.numPoints();
 
-% Define oscillatory density
+% Define near-singular density (smooth Poisson-kernel-like near-source)
 [theta_mat, phi_mat] = grid_surf.meshgrid();
-
-sigma1 = 2.1 + sin(theta_mat);
-sigma2 = 2 + sin(2*theta_mat) .* cos(phi_mat);
-sigma3 = sin(5*theta_mat) .* exp(-cos(phi_mat).^2) + 1.03;
+peakCenter = [0.68, 0.00, 0.0];
+sourceRadius = 0.47;
+peakScale = 1e4;
+sinTheta = sin(theta_mat);
+cosTheta = cos(theta_mat);
+xhat = sinTheta .* cos(phi_mat);
+yhat = sinTheta .* sin(phi_mat);
+zhat = cosTheta;
+peakCenter = peakCenter / norm(peakCenter);
+peakDot = peakCenter(1)*xhat + peakCenter(2)*yhat + peakCenter(3)*zhat;
+peakRaw = (1 - sourceRadius^2) ./ ...
+    (1 - 2*sourceRadius*peakDot + sourceRadius^2).^(3/2);
+peak = peakScale * ...
+    (peakRaw - min(peakRaw(:))) / (max(peakRaw(:)) - min(peakRaw(:)));
+sigma1 = 1.0 + 14.0*peak .* (0.75 + 0.25*xhat) + 0.25*zhat;
+sigma2 = 1.1 + 10.0*peak .* (0.80 + 0.20*zhat) + 0.15*xhat.*zhat;
+sigma3 = 0.9 + 12.0*peak .* (0.70 + 0.30*peakDot) ...
+    + 0.20*(2*zhat.^2 - 1);
 density = [sigma1(:), sigma2(:), sigma3(:)];
 
 % Create large pool of exterior target points
 fprintf('\nCreating target pool (%d x %d grid_surf)...\n', M_pool, M_pool);
-xv = linspace(-2.5, 2.5, M_pool);
-zv = linspace(-4, 4, M_pool);
+xv = linspace(-4.0, 4.5, M_pool);
+zv = linspace(-4.5, 4.5, M_pool);
 [X, Z] = meshgrid(xv, zv);
 targets_pool = [X(:), zeros(M_pool^2, 1), Z(:)];
 
@@ -69,8 +83,8 @@ nPool = size(targets_pool, 1);
 
 % Create points for contour plot
 fprintf('\nCreating contour points (%d x %d grid_est)...\n', M_contour, M_contour);
-xv = linspace(-2.5, 2.5, M_contour);
-zv = linspace(-4, 4, M_contour);
+xv = linspace(-3.0, 3.0, M_contour);
+zv = linspace(-4.5, 4.5, M_contour);
 [X, Z] = meshgrid(xv, zv);
 contour_points = [X(:), zeros(M_contour^2, 1), Z(:)];
 mask_ext_contour = geom.isExterior(contour_points);
@@ -152,26 +166,30 @@ figure('DefaultAxesFontSize',FS);
 loglog(allCounts, t_tabulated, 'o-', 'Color', [0.0, 0.45, 0.74], ...
     'MarkerFaceColor', [0.0, 0.45, 0.74], 'LineWidth', 1.5, 'MarkerSize', 7);
 hold on;
+%loglog(allCounts, allCounts.'./t_tabulated, 'o-', 'Color', [1.0, 0.45, 0.74], ...
+%    'MarkerFaceColor', [1.0, 0.45, 0.74], 'LineWidth', 1.5, 'MarkerSize', 7);
 
 % Direct (red squares + line)
-mask_dir = ~isnan(t_direct);
-loglog(allCounts(mask_dir), t_direct(mask_dir), 's-', 'Color', [0.85, 0.33, 0.1], ...
-    'MarkerFaceColor', [0.85, 0.33, 0.1], 'LineWidth', 1.5, 'MarkerSize', 7);
+%mask_dir = ~isnan(t_direct);
+%loglog(allCounts(mask_dir), t_direct(mask_dir), 's-', 'Color', [0.85, 0.33, 0.1], ...
+%    'MarkerFaceColor', [0.85, 0.33, 0.1], 'LineWidth', 1.5, 'MarkerSize', 7);
 
 % Precomputation time (horizontal dashed black line)
 xlims = [min(allCounts), max(allCounts)];
-plot(xlims, [t_precomp, t_precomp], 'k--', 'LineWidth', 1.5);
+%plot(xlims, [t_precomp, t_precomp], 'k--', 'LineWidth', 1.5);
 
 % Reference slope (dotted black line)
-loglog(allCounts,1e-4*allCounts,'k:','LineWidth',1.5);
+%loglog(allCounts,1e-4*allCounts,'k:','LineWidth',1.5);
+loglog(allCounts,1e-6*allCounts,'k:','LineWidth',1.5);
 
 xlim(xlims);
 xticks([1e1 1e2 1e3 1e4 1e5]);
-yticks([1e-4 1e-3 1e-2 1e-1 1e0 1e1 1e2 1e3 1e4]);
+%yticks([1e-4 1e-3 1e-2 1e-1 1e0 1e1 1e2 1e3 1e4]);
 xlabel('Number of targets, $N$', 'FontSize', FS,'Interpreter', 'latex');
 ylabel('Time (s)', 'FontSize', FS,'Interpreter', 'latex');
-legend({'Tabulated', 'Direct', 'Precomputation'}, ...
-    'Interpreter', 'latex', 'Location', 'northwest', 'FontSize', 14);
+% legend({'Tabulated', 'Direct', 'Precomputation'}, ...
+%     'Interpreter', 'latex', 'Location', 'northwest', 'FontSize', 14);
+%legend('Tabulated', 'Interpreter', 'latex', 'Location', 'northwest', 'FontSize', 14);
 grid on;
 annotation('textarrow',[0.44 0.5],[0.6 0.53],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
 %annotation('textarrow',[0.744 0.65],[0.55 0.615],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
@@ -182,13 +200,13 @@ x_arrow = allCounts(end);
 y_tab = t_tabulated(end);
 y_dir = t_direct(end);
 % Convert to normalized figure coordinates for annotation arrow
-ax = gca;
-x_norm = log10(x_arrow / xlims(1)) / (log10(xlims(2) / xlims(1)));
-y_tab_norm = (log10(y_tab) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
-y_dir_norm = (log10(y_dir) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
-annotation('doublearrow',[x_norm, x_norm]-0.108, [y_dir_norm, y_tab_norm]+0.161);
-text(48000,0.7,[num2str(round(speedup_factor)) '$\times$'], 'FontSize', FS, 'Interpreter', 'latex', ...
-    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
+%ax = gca;
+%x_norm = log10(x_arrow / xlims(1)) / (log10(xlims(2) / xlims(1)));
+%y_tab_norm = (log10(y_tab) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
+%y_dir_norm = (log10(y_dir) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
+%annotation('doublearrow',[x_norm, x_norm]-0.108, [y_dir_norm, y_tab_norm]+0.161);
+%text(48000,0.7,[num2str(round(speedup_factor)) '$\times$'], 'FontSize', FS, 'Interpreter', 'latex', ...
+%    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
 set(gca, 'FontSize', FS);
 
 % Plot contour of error for tabulated and direct estimates
