@@ -22,115 +22,85 @@ centers = [-1.90, -0.70; ...
             1.80,  0.66];
 anglesDeg = [15; -24];
 
-% Conceptual regime boundaries. At overlaps, the target plane is colored by
-% the maximum required quadrature: S3Q > upsampled > standard.
+% Conceptual regime boundaries for one active spheroid at a time.
 sS3Q = 1.22;
 sUpsampled = 1.72;
 
 bg = 0.9*[0.930, 0.935, 0.925];              % warm light gray
-colStandard = [0.250, 0.300, 0.340];
 colUpsampled = [0.000, 0.450, 0.700];
 colS3Q = [0.780, 0.320, 0.120];
 fillUpsampled = [0.730, 0.875, 0.930];
 fillS3Q = [0.955, 0.760, 0.650];
 
-fig = figure( ...
-    'Color', 'w', ...
-    'InvertHardcopy', 'off', ...
-    'Renderer', 'painters');
-ax = axes(fig, 'Position', [0.02, 0.02, 0.96, 0.96]);
-hold(ax, 'on');
-set(ax, 'Color', bg);
+% Identical, tightly cropped panel geometry for side-by-side placement.
+xLimits = [-6.05, 5.80];
+yLimits = [-3.05, 3.15];
+figureSizeCm = [8.6, 4.5];
 
-% Draw the target plane as one classified field. This avoids darkening or
-% ambiguity where regions from the two spheroids overlap.
 if savefig
-    xv = linspace(-7.2, 7.2, 5000);
-    yv = linspace(-4.7, 4.7, 5000);
+    xv = linspace(xLimits(1), xLimits(2), 5000);
+    yv = linspace(yLimits(1), yLimits(2), 5000);
 else
-    xv = linspace(-7.2, 7.2, 500);
-    yv = linspace(-4.7, 4.7, 500);
+    xv = linspace(xLimits(1), xLimits(2), 500);
+    yv = linspace(yLimits(1), yLimits(2), 500);
 end
 [X, Y] = meshgrid(xv, yv);
-regime = classifyTargets(X, Y, a, c, centers, anglesDeg, sS3Q, sUpsampled);
-imagesc(ax, xv, yv, regime);
-set(ax, 'YDir', 'normal');
-colormap(ax, [bg; fillUpsampled; fillS3Q]);
-clim(ax, [1, 3]);
 
-% Region outlines are drawn as unions, not individual spheroid ellipses.
-drawUnionOutline(ax, X, Y, regime >= 2, colUpsampled, 1.45);
-drawUnionOutline(ax, X, Y, regime >= 3, colS3Q, 1.45);
+for activeBody = 1:size(centers, 1)
+    fig = figure( ...
+        'Units', 'centimeters', ...
+        'Position', [2, 2, figureSizeCm], ...
+        'Color', 'w', ...
+        'InvertHardcopy', 'off', ...
+        'Renderer', 'painters');
+    set(fig, ...
+        'PaperUnits', 'centimeters', ...
+        'PaperSize', figureSizeCm, ...
+        'PaperPosition', [0, 0, figureSizeCm]);
+    ax = axes(fig, 'Position', [0, 0, 1, 1]);
+    hold(ax, 'on');
+    set(ax, 'Color', bg);
 
-% Projected surface discretization on each spheroid.
-for ibody = 1:size(centers, 1)
-    drawProjectedSpheroidMesh(ax, a, c, centers(ibody,:), ...
-        anglesDeg(ibody), nth, nph);
-end
+    % Classify targets using only the active spheroid. The other spheroid is
+    % retained in the drawing solely as geometric context.
+    regime = classifyTargetsForBody(X, Y, a, c, centers(activeBody,:), ...
+        anglesDeg(activeBody), sS3Q, sUpsampled);
+    imagesc(ax, xv, yv, regime);
+    set(ax, 'YDir', 'normal');
+    colormap(ax, [bg; fillUpsampled; fillS3Q]);
+    clim(ax, [1, 3]);
 
-axis(ax, 'equal');
-axis(ax, 'off');
-xlim(ax, [min(xv), max(xv)]);
-ylim(ax, [min(yv), max(yv)]);
+    drawUnionOutline(ax, X, Y, regime >= 2, colUpsampled, 1.45);
+    drawUnionOutline(ax, X, Y, regime >= 3, colS3Q, 1.45);
 
-% Labels and leader lines, following the Bagge--Tornberg illustration style.
-annotation(fig, 'textbox', [0.12, 0.800, 0.55, 0.08], ...
-    'String', 'standard quadrature', ...
-    'Interpreter', 'latex', ...
-    'Color', colStandard, ...
-    'FontSize', 23, ...
-    'FontWeight', 'bold', ...
-    'EdgeColor', 'none', ...
-    'BackgroundColor', 'none', ...
-    'FitBoxToText', 'on');
-
-annotation(fig, 'arrow', [0.750, 0.600], [0.310, 0.460], ...
-    'Color', colS3Q, ...
-    'LineWidth', 1.35, ...
-    'HeadLength', 8, ...
-    'HeadWidth', 8);
-annotation(fig, 'textbox', [0.750, 0.260, 0.18, 0.08], ...
-    'String', 'S3Q', ...
-    'Interpreter', 'latex', ...
-    'Color', colS3Q, ...
-    'FontSize', 22, ...
-    'FontWeight', 'bold', ...
-    'EdgeColor', 'none', ...
-    'BackgroundColor', 'none', ...
-    'FitBoxToText', 'on');
-
-annotation(fig, 'arrow', [0.220, 0.180], [0.220, 0.330], ...
-    'Color', colUpsampled, ...
-    'LineWidth', 1.35, ...
-    'HeadLength', 8, ...
-    'HeadWidth', 8);
-annotation(fig, 'textbox', [0.145, 0.150, 0.62, 0.08], ...
-    'String', 'upsampled quadrature', ...
-    'Interpreter', 'latex', ...
-    'Color', colUpsampled, ...
-    'FontSize', 21, ...
-    'FontWeight', 'bold', ...
-    'EdgeColor', 'none', ...
-    'BackgroundColor', 'none', ...
-    'FitBoxToText', 'on');
-
-if savefig
-    figDir = fullfile(projectDir, 'figs');
-    if ~exist(figDir, 'dir'); mkdir(figDir); end
-    outFile = fullfile(figDir, 'quadrature_regimes_spheroid.pdf');
-    exportgraphics(fig, outFile, 'Resolution', 600, 'BackgroundColor', bg);
-    fprintf('Saved %s\n', outFile);
-end
-
-function regime = classifyTargets(X, Y, a, c, centers, anglesDeg, sS3Q, sUpsampled)
-    regime = ones(size(X));  % 1 = standard, 2 = upsampled, 3 = S3Q
     for ibody = 1:size(centers, 1)
-        [Xloc, Yloc] = toLocalPlane(X, Y, centers(ibody,:), anglesDeg(ibody));
-        inUpsampled = (Xloc./(sUpsampled*c)).^2 + (Yloc./(sUpsampled*a)).^2 <= 1;
-        inS3Q = (Xloc./(sS3Q*c)).^2 + (Yloc./(sS3Q*a)).^2 <= 1;
-        regime(inUpsampled) = max(regime(inUpsampled), 2);
-        regime(inS3Q) = max(regime(inS3Q), 3);
+        drawProjectedSpheroidMesh(ax, a, c, centers(ibody,:), ...
+            anglesDeg(ibody), nth, nph);
     end
+
+    axis(ax, 'equal');
+    axis(ax, 'off');
+    xlim(ax, xLimits);
+    ylim(ax, yLimits);
+
+    if savefig
+        figDir = fullfile(projectDir, 'figs');
+        if ~exist(figDir, 'dir'); mkdir(figDir); end
+        bodyNames = {'left', 'right'};
+        outFile = fullfile(figDir, sprintf( ...
+            'quadrature_regimes_%s_spheroid.pdf', bodyNames{activeBody}));
+        print(fig, outFile, '-dpdf', '-painters');
+        fprintf('Saved %s\n', outFile);
+    end
+end
+
+function regime = classifyTargetsForBody(X, Y, a, c, center, angleDeg, sS3Q, sUpsampled)
+    regime = ones(size(X));  % 1 = standard, 2 = upsampled, 3 = S3Q
+    [Xloc, Yloc] = toLocalPlane(X, Y, center, angleDeg);
+    inUpsampled = (Xloc./(sUpsampled*c)).^2 + (Yloc./(sUpsampled*a)).^2 <= 1;
+    inS3Q = (Xloc./(sS3Q*c)).^2 + (Yloc./(sS3Q*a)).^2 <= 1;
+    regime(inUpsampled) = 2;
+    regime(inS3Q) = 3;
 end
 
 function drawUnionOutline(ax, X, Y, mask, color, lineWidth)
