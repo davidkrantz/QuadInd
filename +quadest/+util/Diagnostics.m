@@ -101,22 +101,37 @@ classdef Diagnostics
             end
         end
         
-        function checkRootQuality(root, gamma, target, tol)
-            % CHECKROOTQUALITY Verify that a computed root satisfies |gamma(root) - target|^2 ≈ 0
+        function [valid, residual] = checkInterpolatedThetaRoots(geometry, roots, phi, targets, tol)
+            % CHECKINTERPOLATEDTHETAROOTS Check the analytic complex root equation
             %
-            %   checkRootQuality(root, gamma, target, tol)
+            %   [valid, residual] = checkInterpolatedThetaRoots(geometry, roots, phi, targets, tol)
             %
-            % Inputs:
-            %   root   - Complex root value
-            %   gamma  - Parameterization function handle
-            %   target - Target point [1×3]
-            %   tol    - Tolerance for residual check
-            
-            residual = sum(abs(gamma(root) - target).^2);
-            if residual > tol
-                quadest.util.Diagnostics.warn( ...
-                    'Root quality check failed: |gamma(root) - target|^2 = %.2e', ...
-                    residual);
+            % A complex singularity root satisfies the analytic equation
+            % sum((gamma(theta,phi)-target).^2) = 0. The numerator must not
+            % conjugate the complex displacement.
+
+            arguments
+                geometry (1,1) quadest.geometry.AxsymGeometry
+                roots (:,1) {mustBeNumeric}
+                phi (:,1) {mustBeNumeric}
+                targets (:,3) {mustBeNumeric}
+                tol (1,1) {mustBePositive}
+            end
+
+            if size(roots,1) ~= size(targets,1) || size(phi,1) ~= size(targets,1)
+                error('quadest:Diagnostics:targetCountMismatch', ...
+                    'roots, phi, and targets must have the same number of rows.');
+            end
+
+            displacement = geometry.evaluate(roots, phi) - targets;
+            residual = abs(sum(displacement.^2, 2));
+            valid = isfinite(roots) & residual <= tol;
+
+            if any(~valid)
+                warning('quadest:Diagnostics:interpolatedRootResidual', ...
+                    ['%d interpolated theta root(s) failed the analytic root check ' ...
+                     '(maximum normalized residual %.2e, tolerance %.2e).'], ...
+                    sum(~valid), max(residual(~valid)), tol);
             end
         end
         

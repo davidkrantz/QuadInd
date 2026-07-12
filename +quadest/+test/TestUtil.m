@@ -12,6 +12,7 @@ classdef TestUtil < quadest.test.TestBase
             obj.assertEqual(cfg.nth, 40);
             obj.assertEqual(cfg.nph, 60);
             obj.assertAlmostEqual(cfg.tol, 1e-6);
+            obj.assertAlmostEqual(cfg.interpolatedRootResidualTolerance, 1e-6);
         end
         
         function test_config_get(obj)

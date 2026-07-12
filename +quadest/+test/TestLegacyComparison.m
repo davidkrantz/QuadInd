@@ -345,6 +345,40 @@ classdef TestLegacyComparison < quadest.test.TestBase
                 'isExterior should match legacy find_exterior_points');
         end
 
+        function test_uniform_single_estimates_match_legacy_reference(obj)
+            %TEST_UNIFORM_SINGLE_ESTIMATES_MATCH_LEGACY_REFERENCE Direct point estimates
+            if ~obj.legacyAvailable; obj.skip('Legacy code not available'); end
+
+            a = 0.05; c = 0.1;
+            nth = 20; nph = 30;
+
+            geom = quadest.geometry.Spheroid('a', a, 'c', c);
+            grid = quadest.grid.AxsymGrid(geom, 'nth', nth, 'nph', nph);
+            kernel = quadest.kernel.StokesStresslet();
+
+            targets = [
+                0.0183673469388, 0, 0.1469387755100;
+                0.0704081632653, 0, 0.1224489795920;
+                0.0979591836735, 0, 0.0183673469388;
+            ];
+            expected = [
+                1.30870479819e-06, 3.38102441411e-39, 1.30870479819e-06;
+                1.49072312607e-05, 2.40675263166e-15, 1.49072312617e-05;
+                4.84002446179e-03, 2.13371363950e-06, 4.83829323757e-03;
+            ];
+
+            estimates = quadest.errorest.UniformEstimateBuilder.computeEstimates( ...
+                geom, grid, kernel, targets, kernel.singularityOrder());
+
+            absTol = 1e-13;
+            relTol = 1e-10;
+            err = abs(estimates - expected);
+            allowed = absTol + relTol * abs(expected);
+            obj.assertTrue(all(err(:) <= allowed(:)), ...
+                sprintf('Uniform single-point estimates differ from legacy reference (max scaled err=%.3g)', ...
+                    max(err(:) ./ allowed(:))));
+        end
+
         %% ---- Full error estimation workflow ----
 
         function test_full_error_estimate_workflow(obj)
@@ -353,7 +387,7 @@ classdef TestLegacyComparison < quadest.test.TestBase
 
             a = 0.05; c = 0.1;
             nth = 20; nph = 30;
-            upsamp_fac = 1:4;
+            upsamp_fac = 1:2;
 
             % New implementation - precompute
             geom = quadest.geometry.Spheroid('a', a, 'c', c);
@@ -393,14 +427,10 @@ classdef TestLegacyComparison < quadest.test.TestBase
                         val_new(ii) = estimator.interpolants{upfac, comp}(rxy_flat(ii), z_flat(ii));
                     end
 
-                    % Compare in log10 space (raw interpolant values).
-                    % Tolerance of 2.0 in log10 accommodates differences
-                    % near the surface where estimates change rapidly and
-                    % the two Newton solvers may diverge slightly.
-                    maxdiff = max(abs(val_new - val_leg));
-                    obj.assertTrue(maxdiff < 2.0, ...
-                        sprintf('Interpolant mismatch for upfac=%d, comp=%d (maxdiff=%.2g)', ...
-                            upfac, comp, maxdiff));
+                    rel_diff = max(abs(10.^val_new-10.^val_leg)./abs(10.^val_leg));
+                    obj.assertTrue(rel_diff < 1e-10, ...
+                        sprintf('Interpolant mismatch for upfac=%d, comp=%d (rel_diff=%.2g)', ...
+                        upfac, comp, rel_diff));
                 end
             end
 
@@ -439,10 +469,10 @@ classdef TestLegacyComparison < quadest.test.TestBase
                 % Estimates should agree within reasonable tolerance
                 % (interpolation grids and tabulation may differ slightly)
                 if est_leg > 0 && est_new > 0
-                    log_ratio = abs(log10(est_new) - log10(est_leg));
-                    obj.assertTrue(log_ratio < 2.0, ...
-                        sprintf('Estimate mismatch at target %d: new=%.4g, leg=%.4g (log10 diff=%.2g)', ...
-                            t, est_new, est_leg, log_ratio));
+                    rel_err = abs(est_new - est_leg)/abs(est_leg);
+                    obj.assertTrue(rel_err < 1e-10, ...
+                        sprintf('Estimate mismatch at target %d: new=%.4g, leg=%.4g (rel diff=%.2g)', ...
+                            t, est_new, est_leg, rel_err));
                 else
                     obj.assertTrue(est_new >= 0, ...
                         sprintf('Estimate should be non-negative at target %d', t));

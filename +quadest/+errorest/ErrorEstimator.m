@@ -150,8 +150,13 @@ classdef ErrorEstimator < handle
                 % Use interpolated theta roots
                 theta0_interp = obj.rootInterpolants.Re{1}(rxy, zabs) + ...
                                 1i * obj.rootInterpolants.Im{1}(rxy, zabs);
+                % Root tables use the z >= 0 half-plane. Map the cached root
+                % back to the physical hemisphere for reflected targets.
+                negz = targets(:,3) < 0;
+                theta0_interp(negz) = pi - theta0_interp(negz);
                 [qphi, qtheta, ~, ~] = quadest.errorest.DensityModifier.computeDensityAtRoots(...
-                    obj.grid, targets, density, theta0_interp);
+                    obj.grid, targets, density, theta0_interp, ...
+                    obj.config.interpolatedRootResidualTolerance);
             else
                 % Compute theta roots on-the-fly
                 [qphi, qtheta, ~, ~] = quadest.errorest.DensityModifier.computeDensityAtRoots(...
@@ -159,10 +164,12 @@ classdef ErrorEstimator < handle
             end
             
             % Modification factor: max over phi and theta directions
-            modifier = quadest.errorest.DensityModifier.computeModifier(qphi, qtheta);
-            
-            % Modified estimate: max over components
-            result = max(estval .* modifier, [], 2);
+            modifier = quadest.errorest.DensityModifier.computeModifier(qphi, qtheta, targets);
+
+            % Modified estimate: conservatively sum component indicators.
+            result = sum(estval .* modifier, 2);
+            % Legacy/direct-mask parity version: max over components.
+            %result = max(estval .* modifier, [], 2);
             
             % Classification (only if tolerance provided)
             if ~isempty(tol) && nargout > 1
@@ -199,15 +206,15 @@ classdef ErrorEstimator < handle
             fprintf('  Interpolate roots: %s\n', mat2str(obj.interpolateRoots));
         end
         
-        function result = evaluateDirect(obj, targets, density)
+        function result = evaluateDirect(obj, targets, density, varargin)
             % EVALUATEDIRECT Compute error estimates directly (without tabulation)
             %
             %   estimates = evaluateDirect(obj, targets, density)
             %
-            % Computes error estimates by evaluating the error formula at each
-            % target point with the given density, bypassing the precomputed
-            % interpolants. This is much slower than evaluate() but useful for
-            % benchmarking the speedup of the tabulated method.
+            % Computes the same per-component uniform indicators used to build
+            % the tabulated interpolants, but evaluates them directly at each
+            % target point instead of interpolating. The supplied grid density is
+            % then applied using the same root-density modifier as evaluate().
             %
             % Unlike evaluate(), this method does not support classification
             % or upsampling factors — it only computes direct (upfac=1) estimates.
@@ -226,8 +233,15 @@ classdef ErrorEstimator < handle
                 targets (:,3) {mustBeNumeric}
                 density (:,:) {mustBeNumeric}
             end
-            
-            % Validate density size
+            arguments (Repeating)
+                varargin
+            end
+
+            if ~isempty(varargin)
+                error('quadest:ErrorEstimator:unsupportedDirectOption', ...
+                    'evaluateDirect uses grid density only and does not support additional options.');
+            end
+
             expectedN = obj.grid.numPoints();
             if size(density, 1) ~= expectedN
                 error('quadest:ErrorEstimator:invalidDensity', ...
@@ -267,7 +281,9 @@ classdef ErrorEstimator < handle
                 end
                 
                 % Modified estimate
-                estimate_up = max(estval .* modifier, [], 2);
+                estimate_up = sum(estval .* modifier, 2);
+                % Legacy/direct-mask parity version: max over components.
+                %estimate_up = max(estval .* modifier, [], 2);
                 
                 % Store per-factor estimate for all targets
                 classification.estimates{k} = estimate_up;

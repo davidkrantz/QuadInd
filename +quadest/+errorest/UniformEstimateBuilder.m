@@ -110,7 +110,7 @@ classdef UniformEstimateBuilder
                     fullRoots = zeros(size(evalPoints, 1), 1);
                     fullRoots(evalMask) = thetaRoots;
                     rootMat = reshape(fullRoots, config.ntab, config.nztab);
-                    
+
                     rootInterp.Re{upfac} = griddedInterpolant(...
                         tabGrid.xy_grid, tabGrid.z_grid, real(rootMat), 'linear');
                     rootInterp.Im{upfac} = griddedInterpolant(...
@@ -159,7 +159,7 @@ classdef UniformEstimateBuilder
                 
                 [est, theta0] = quadest.errorest.UniformEstimateBuilder.computeSingleEstimate(...
                     geometry, grid, target, itheta_all(ii), iphi_all(ii), p, xlag, wlag);
-                
+
                 estimates(ii, :) = est;
                 thetaRoots(ii) = theta0;
             end
@@ -170,10 +170,10 @@ classdef UniformEstimateBuilder
             %
             %   estimates = computeDirectEstimates(geometry, grid, kernel, targets, density)
             %
-            % Computes error estimates directly for each target point using the
-            % actual density, without precomputed tabulation. This is the expensive
-            % per-target computation; use for benchmarking against the fast
-            % tabulated method (ErrorEstimator.evaluate).
+            % Computes the same per-component uniform indicators used to build
+            % the tabulated interpolants, but directly at each target point.
+            % The supplied density is then applied through the same root-density
+            % modifier used by ErrorEstimator.evaluate().
             %
             % Inputs:
             %   geometry - AxsymGeometry object
@@ -184,29 +184,28 @@ classdef UniformEstimateBuilder
             %
             % Outputs:
             %   estimates - [M×1] scalar error estimates
-            
-            M = size(targets, 1);
+
             ncomp = kernel.numComponents();
             p = kernel.singularityOrder();
-            
-            % Reshape density for interpolation: [nth × nph × ncomp]
-            dens_3d = reshape(density, grid.nth, grid.nph, ncomp);
-            
-            estimates = zeros(M, 1);
-            
-            % Find closest grid points using parametric approach
-            [itheta_all, iphi_all] = quadest.errorest.UniformEstimateBuilder.findNearestNodes(grid, targets);
-            
-            % Get Gauss-Laguerre quadrature
-            [xlag, wlag] = quadest.util.GaussLaguerre8();
-            
-            % Loop through target points
-            for ii = 1:M
-                target = targets(ii, :);
-                
-                estimates(ii) = quadest.errorest.UniformEstimateBuilder.computeSingleDirectEstimate(...
-                    geometry, grid, target, itheta_all(ii), iphi_all(ii), p, xlag, wlag, dens_3d);
+
+            if size(density, 1) ~= grid.numPoints()
+                error('quadest:UniformEstimateBuilder:invalidDensity', ...
+                    'Density must have %d rows (got %d)', grid.numPoints(), size(density, 1));
             end
+            if size(density, 2) ~= ncomp
+                error('quadest:UniformEstimateBuilder:invalidDensity', ...
+                    'Density must have %d columns (got %d)', ncomp, size(density, 2));
+            end
+
+            [uniformEstimates, thetaRoots] = ...
+                quadest.errorest.UniformEstimateBuilder.computeEstimates(...
+                    geometry, grid, kernel, targets, p);
+
+            [qphi, qtheta] = quadest.errorest.DensityModifier.computeDensityAtRoots(...
+                grid, targets, density, thetaRoots);
+            modifier = quadest.errorest.DensityModifier.computeModifier(qphi, qtheta, targets);
+
+            estimates = sum(uniformEstimates .* modifier, 2);
         end
 
         function [itheta, iphi] = findNearestNodes(grid, targets)
@@ -371,12 +370,6 @@ classdef UniformEstimateBuilder
                 nvec_phi = [-dcdt_star * at_star * cos(phi0_test), ...
                             -dcdt_star * at_star * sin(phi0_test), ...
                              dadt_star * at_star];
-                r_phi = srfvec_phi - target;
-                rn = sum(r_phi .* nvec_phi);
-                
-                % With unit density e_c: rq=r(c), fp0t = -6*max(|r|)*|r(c)|*|rn|
-                % So est_const(c) = base_const * |r(c)|, vectorized over all 3 components
-                base_const = 6 * abs(2 / gamma(p)) * max(abs(r_phi)) * abs(rn) * abs(Gphi^(-p));
                 
                 % Integration (identical for all components)
                 dtpos = phi0_test + dp0_pos - dp0_ref;
@@ -387,8 +380,14 @@ classdef UniformEstimateBuilder
                 
                 int_sum = sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_TZ);
                 
-                % All 3 components at once
-                estTZ_both(ii, :) = base_const * int_sum * abs(r_phi);
+                for c = 1:3
+                    density = zeros(1, 3);
+                    density(c) = 1.0;
+                    fp0t = quadest.errorest.UniformEstimateBuilder.stressletRootValue( ...
+                        srfvec_phi, target, density, nvec_phi);
+                    est_const = abs(2 / gamma(p) * fp0t * Gphi^(-p));
+                    estTZ_both(ii, c) = est_const * int_sum;
+                end
             end
             
             estTZ = min(estTZ_both, [], 1);
@@ -422,11 +421,6 @@ classdef UniformEstimateBuilder
                 nvec_th = dfac * [-dcdt_t0 * at_t0 * cos(phi_star), ...
                                   -dcdt_t0 * at_t0 * sin(phi_star), ...
                                    dadt_t0 * at_t0];
-                r_th = srfvec_th - target;
-                rn_th = sum(r_th .* nvec_th);
-                
-                % Vectorized kernel: base_const * |r_th| gives [1x3]
-                base_const = 6 * abs(2 / gamma(p)) * max(abs(r_th)) * abs(rn_th) * abs(Gtheta^(-p));
                 
                 % Integration (identical for all components)
                 dtpos = t0_test - (dt0_pos - dt0_ref);
@@ -437,178 +431,19 @@ classdef UniformEstimateBuilder
                 
                 int_sum = sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_GL);
                 
-                % All 3 components at once
-                estGL_both(ii, :) = base_const * int_sum * abs(r_th);
+                for c = 1:3
+                    density = zeros(1, 3);
+                    density(c) = 1.0;
+                    ft0p = quadest.errorest.UniformEstimateBuilder.stressletRootValue( ...
+                        srfvec_th, target, density, nvec_th);
+                    est_const = abs(2 / gamma(p) * ft0p * Gtheta^(-p));
+                    estGL_both(ii, c) = est_const * int_sum;
+                end
             end
             
             estGL = min(estGL_both, [], 1);
             
             % Combined estimate (sum of both directions)
-            est = estTZ + estGL;
-        end
-        
-        function est = computeSingleDirectEstimate(geometry, grid, target, itheta, iphi, p, xlag, wlag, dens_3d)
-            % COMPUTESINGLEDIRECTESTIMATE Compute error estimate for single target with density
-            %
-            % Optimized: all closures eliminated, geometry evaluations minimized,
-            % kernel evaluation and integration folded inline.
-            
-            % --- Grid values and mapping constants ---
-            theta_star = grid.theta(itheta);
-            phi_star = grid.phi(iphi);
-            dfac = pi/2;
-            
-            % --- Phi root (analytic) ---
-            [phi0, Gphi] = quadest.errorest.RootFinder.computePhiRoot(geometry, target, theta_star);
-            
-            % --- Theta root ---
-            if target(3) ~= 0 && isa(geometry, 'quadest.geometry.Spheroid')
-                % Analytic formula for spheroid
-                theta0 = geometry.findThetaRoot(target, phi_star);
-                t0 = (2/pi) * theta0 - 1;
-            else
-                t_star = (2/pi) * theta_star - 1;
-                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(...
-                    geometry, target, phi_star, t_star, dfac);
-                theta0 = dfac * (t0 + 1);
-            end
-            
-            % --- Geometric factor Gtheta (one evaluate+drdtheta call) ---
-            gamma_final = geometry.evaluate(theta0, phi_star);
-            dgamma_final = dfac * geometry.drdtheta(theta0, phi_star);
-            r_theta = gamma_final - target;
-            Gtheta = 2 * dot(r_theta, dgamma_final);
-            
-            % --- Geometry at closest point (shared by kernel + semiRoot) ---
-            at_star = geometry.at(theta_star);
-            ct_star = geometry.ct(theta_star);
-            dadt_star = geometry.dadt(theta_star);
-            dcdt_star = geometry.dcdt(theta_star);
-            
-            rvec = [at_star * cos(phi_star), at_star * sin(phi_star), ct_star] - target;
-            drdphi_vec = [-at_star * sin(phi_star), at_star * cos(phi_star), 0];
-            drdtheta_vec = [dadt_star * cos(phi_star), dadt_star * sin(phi_star), dcdt_star];
-            
-            % --- SemiRoot coefficients (avoids closures) ---
-            % Phi direction: drds=drdphi, drdt=drdtheta
-            dp_r2       = sum(rvec.^2);
-            dp_r_drdt   = rvec * drdtheta_vec.';
-            dp_drdt2    = sum(drdtheta_vec.^2);
-            dp_r_drds   = rvec * drdphi_vec.';
-            dp_dt_ds    = drdtheta_vec * drdphi_vec.';
-            dp_drds2    = sum(drdphi_vec.^2);
-            
-            % Theta direction: drds=drdtheta, drdt=drdphi (swap roles)
-            dt_r2       = dp_r2;
-            dt_r_drdt   = dp_r_drds;
-            dt_drdt2    = dp_drds2;
-            dt_r_drds   = dp_r_drdt;
-            dt_dt_ds    = dp_dt_ds;
-            dt_drds2    = dp_drdt2;
-            
-            % --- Scaling constants ---
-            norm_drdtheta = sqrt(dp_drdt2);
-            norm_drdphi = sqrt(dp_drds2);
-            C_TZ = grid.nph * norm_drdtheta / norm_drdphi;
-            C_GL = max(grid.nth * norm_drdphi / norm_drdtheta, grid.nth);
-            
-            % --- Density interpolation ---
-            q_phi = quadest.errorest.DensityModifier.interpDensityPhi(...
-                grid, dens_3d, phi0, itheta);
-            q_theta = quadest.errorest.DensityModifier.interpDensityTheta(...
-                grid, dens_3d, theta0, iphi);
-            
-            % ===============================================
-            % Phi direction estimate (trapezoidal rule)
-            % ===============================================
-            ds_phi = xlag / C_TZ;
-            dp0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
-                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, 0);
-            dp0_pos = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
-                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, ds_phi);
-            dp0_neg = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
-                dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, -ds_phi);
-            
-            phi0_candidates = [phi0; conj(phi0)];
-            estTZ_both = zeros(2, 1);
-            pm1 = p - 1;
-            
-            for ii = 1:2
-                phi0_test = phi0_candidates(ii);
-                
-                % Inline kernel at phi root
-                srfvec_phi = [at_star * cos(phi0_test), at_star * sin(phi0_test), ct_star];
-                nvec_phi = [-dcdt_star * at_star * cos(phi0_test), ...
-                            -dcdt_star * at_star * sin(phi0_test), ...
-                             dadt_star * at_star];
-                r_phi = srfvec_phi - target;
-                rq = sum(r_phi .* q_phi);
-                rn = sum(r_phi .* nvec_phi);
-                fp0t = -6 * max(abs(r_phi * (rq * rn)));
-                
-                % Integration
-                est_const = abs(2 / gamma(p) * fp0t * Gphi^(-p));
-                
-                dtpos = phi0_test + dp0_pos - dp0_ref;
-                dtneg = phi0_test + dp0_neg - dp0_ref;
-                
-                int_pos = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtpos, grid.nph, pm1);
-                int_neg = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtneg, grid.nph, pm1);
-                
-                estTZ_both(ii) = est_const * sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_TZ);
-            end
-            
-            estTZ = min(estTZ_both);
-            if isnan(estTZ); estTZ = 0; end
-            
-            % ===============================================
-            % Theta direction estimate (Gauss-Legendre)
-            % ===============================================
-            ds_theta = xlag / C_GL;
-            dt0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
-                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, 0);
-            dt0_pos = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
-                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, ds_theta);
-            dt0_neg = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
-                dt_r2, dt_r_drdt, dt_drdt2, dt_r_drds, dt_dt_ds, dt_drds2, -ds_theta);
-            
-            t0_candidates = [t0; conj(t0)];
-            estGL_both = zeros(2, 1);
-            
-            for ii = 1:2
-                t0_test = t0_candidates(ii);
-                
-                % Inline kernel at theta root
-                theta0_test = dfac * (t0_test + 1);
-                at_t0 = geometry.at(theta0_test);
-                ct_t0 = geometry.ct(theta0_test);
-                dadt_t0 = geometry.dadt(theta0_test);
-                dcdt_t0 = geometry.dcdt(theta0_test);
-                
-                srfvec_th = [at_t0 * cos(phi_star), at_t0 * sin(phi_star), ct_t0];
-                nvec_th = dfac * [-dcdt_t0 * at_t0 * cos(phi_star), ...
-                                  -dcdt_t0 * at_t0 * sin(phi_star), ...
-                                   dadt_t0 * at_t0];
-                r_th = srfvec_th - target;
-                rq_th = sum(r_th .* q_theta);
-                rn_th = sum(r_th .* nvec_th);
-                ft0p = -6 * max(abs(r_th * (rq_th * rn_th)));
-                
-                % Integration
-                est_const = abs(2 / gamma(p) * ft0p * Gtheta^(-p));
-                
-                dtpos = t0_test - (dt0_pos - dt0_ref);
-                dtneg = t0_test - (dt0_neg - dt0_ref);
-                
-                int_pos = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtpos, grid.nth, pm1);
-                int_neg = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtneg, grid.nth, pm1);
-                
-                estGL_both(ii) = est_const * sum((int_pos + int_neg) .* exp(xlag) .* wlag / C_GL);
-            end
-            
-            estGL = min(estGL_both);
-            
-            % Combined estimate
             est = estTZ + estGL;
         end
         
@@ -621,6 +456,34 @@ classdef UniformEstimateBuilder
             bb = 2*r_drds + 2*drdt_drds*dt;
             val = -bb./(2*drds2) + 1i*sqrt(aa./drds2 - (bb./(2*drds2)).^2);
         end
+
+        function val = stressletRootValue(source, target, density, normal)
+            % STRESSLETROOTVALUE Stresslet numerator at a complex root.
+            %
+            % Corrected/main version: use the analytic bilinear continuation
+            % r_i (r_j q_j) (r_k n_k). Do not conjugate r in the normal
+            % contraction; conjugation would break analyticity at the root.
+            %
+            % Legacy behavior used conj(r) in the normal contraction:
+            %   rn = sum(bsxfun(@times, conj(r), n), 3);
+            % That line is kept below as a commented reference.
+
+            r = zeros(size(target, 1), size(source, 1), 3);
+            for d = 1:3
+                xd = source(:, d).';
+                yd = target(:, d);
+                r(:, :, d) = bsxfun(@minus, xd, yd);
+            end
+
+            q = reshape(density, [size(density, 1), 1, 3]);
+            n = reshape(normal, [size(normal, 1), 1, 3]);
+            rq = sum(bsxfun(@times, r, q), 3);
+            rn = sum(bsxfun(@times, r, n), 3);
+            % Legacy parity version:
+            %rn = sum(bsxfun(@times, conj(r), n), 3);
+            f = bsxfun(@times, r, rq .* rn);
+            val = -6 * max(abs(f));
+        end
         
         function knq = trapzErrFunc(z, n, q)
             % TRAPZERRFUNC q-th derivative of trapezoidal error function
@@ -632,19 +495,27 @@ classdef UniformEstimateBuilder
             % GLERRFUNC q-th derivative of Gauss-Legendre error function
             
             % Transform to first quadrant (real part)
-            z = abs(real(z)) + 1i * imag(z);
-            
-            % Joukowski map: rho = z + sqrt(z^2 - 1)
-            % For z on/near the imaginary axis with imag(z) < 0, the
-            % principal branch can give |rho| < 1, leading to a spurious
-            % blow-up.  The two branches rho and 1/rho are reciprocals;
-            % always choose the one with |rho| >= 1.
-            sq = sqrt(z.^2 - 1);
+            % z1 = abs(real(z)) + 1i * imag(z);
+            % sq1 = sqrt(z1.^2 - 1);
+            % rho1 = z1 + sq1;
+            % flip = abs(rho1) < 1;
+            % rho1(flip) = z1(flip) - sq1(flip);
+            % knq1 = 2 * pi ./ rho1.^(2*n + 1);
+
+            % Branch cut handling according to paper
+            sq = sqrt(z+1).*sqrt(z-1);
             rho = z + sq;
-            flip = abs(rho) < 1;
-            rho(flip) = z(flip) - sq(flip);
-            
             knq = 2 * pi ./ rho.^(2*n + 1);
+
+            % if norm(abs(knq) - abs(knq1), Inf) > 1e-12
+            %     warning('quadest:UniformEstimateBuilder:glErrFuncBranchCut', ...
+            %         'GL error function branch cut handling may be inconsistent.');
+            % end
+
+            % Legacy parity version, using MATLAB's principal branch directly:
+            % z = abs(real(z)) + 1i * imag(z);
+            % sq = sqrt(z.^2 - 1);
+            % knq = 2 * pi ./ (z + sq).^(2*n + 1);
             if q ~= 0
                 knq = knq .* (-(2*n + 1) ./ sq).^q;
             end

@@ -14,10 +14,10 @@ classdef DensityModifier
     % See also: quadest.errorest.ErrorEstimator, quadest.errorest.RootFinder
     
     methods (Static)
-        function [qphi, qtheta, phi0, intpind] = computeDensityAtRoots(grid, targets, density, theta0)
-            % COMPUTEDENSITYATROOTS Evaluate density magnitude at complex roots
+        function [qphi, qtheta, phi0, intpind] = computeDensityAtRoots(grid, targets, density, theta0, rootCheckTolerance)
+            % COMPUTEDENSITYATROOTS Evaluate density at complex roots
             %
-            %   [qphi, qtheta, phi0, intpind] = computeDensityAtRoots(grid, targets, density, theta0)
+            %   [qphi, qtheta, phi0, intpind] = computeDensityAtRoots(grid, targets, density, theta0, rootCheckTolerance)
             %
             % Uses 2-point linear interpolation to evaluate density at complex roots.
             %
@@ -26,10 +26,12 @@ classdef DensityModifier
             %   targets - [M×3] target points
             %   density - [N×3] density on grid (N = nth*nph)
             %   theta0  - [M×1] (optional) precomputed theta roots
+            %   rootCheckTolerance - optional normalized residual tolerance;
+            %                        NaN disables the interpolated-root check
             %
             % Outputs:
-            %   qphi   - [M×3] density magnitude at phi roots
-            %   qtheta - [M×3] density magnitude at theta roots
+            %   qphi   - [M×3] density at phi roots
+            %   qtheta - [M×3] density at theta roots
             %   phi0   - [M×1] computed phi roots
             %   intpind - [M×2] indices of interpolation neighbors (for potential reuse)
             
@@ -38,6 +40,7 @@ classdef DensityModifier
                 targets (:,3) {mustBeNumeric}
                 density (:,:) {mustBeNumeric}
                 theta0 (:,1) = []
+                rootCheckTolerance (1,1) double = NaN
             end
             
             ncomp = size(density, 2);
@@ -59,20 +62,57 @@ classdef DensityModifier
             % Compute theta roots if not provided
             if isempty(theta0)
                 theta0 = grid.geometry.findThetaRoot(targets, phi_star(:));
+            elseif isfinite(rootCheckTolerance)
+                quadest.util.Diagnostics.checkInterpolatedThetaRoots( ...
+                    grid.geometry, theta0, phi_star(:), targets, rootCheckTolerance);
             end
             
             % Evaluate density at theta roots
             qtheta = quadest.errorest.DensityModifier.interpDensityTheta(grid, dens_3d, theta0, iphi_star);
         end
         
-        function modifier = computeModifier(qphi, qtheta)
+        function modifier = computeModifier(qphi, qtheta, targets)
             % COMPUTEMODIFIER Compute the density modification factor
             %
-            %   modifier = computeModifier(qphi, qtheta)
+            %   modifier = computeModifier(qphi, qtheta, targets)
             %
-            % Returns max(|qphi|, |qtheta|) per component.
-            
-            modifier = max(abs(qphi), abs(qtheta));
+            % Rotates global Cartesian density components into the target's
+            % meridional tabulation frame, then returns the maximum root
+            % magnitude per component.
+
+            arguments
+                qphi (:,3) {mustBeNumeric}
+                qtheta (:,3) {mustBeNumeric}
+                targets (:,3) {mustBeNumeric}
+            end
+
+            if (all(targets(:,1) == 0) && all(targets(:,2) == 0)) || all(targets(:,2) == 0)
+                % Special case 1: target on z-axis, rotation is undefined.
+                % Special case 2: target in xz-plane, rotation is trivial (identity).
+                % In both cases, use unrotated global Cartesian components.
+                modifier = max(abs(qphi), abs(qtheta));
+                return;
+            end
+
+            alpha = atan2(targets(:,2), targets(:,1));
+            cosalpha = cos(alpha);
+            sinalpha = sin(alpha);
+            zsign = ones(size(targets, 1), 1);
+            zsign(targets(:,3) < 0) = -1;
+
+            qphiRot = [ ...
+                cosalpha .* qphi(:,1) + sinalpha .* qphi(:,2), ...
+               -sinalpha .* qphi(:,1) + cosalpha .* qphi(:,2), ...
+                zsign .* qphi(:,3)];
+            qthetaRot = [ ...
+                cosalpha .* qtheta(:,1) + sinalpha .* qtheta(:,2), ...
+               -sinalpha .* qtheta(:,1) + cosalpha .* qtheta(:,2), ...
+                zsign .* qtheta(:,3)];
+
+            modifier = max(abs(qphiRot), abs(qthetaRot));
+
+            % Legacy parity version: compare unrotated global Cartesian components.
+            %modifier = max(abs(qphi), abs(qtheta));
         end
     end
     
