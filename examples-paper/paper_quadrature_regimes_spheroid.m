@@ -78,6 +78,10 @@ for activeBody = 1:size(centers, 1)
             anglesDeg(ibody), nth, nph);
     end
 
+    if activeBody == 1
+        drawRegimeLabels(ax, colUpsampled, colS3Q);
+    end
+
     axis(ax, 'equal');
     axis(ax, 'off');
     xlim(ax, xLimits);
@@ -107,6 +111,24 @@ function drawUnionOutline(ax, X, Y, mask, color, lineWidth)
     contour(ax, X, Y, double(mask), [0.5, 0.5], ...
         'Color', color, ...
         'LineWidth', lineWidth);
+end
+
+function drawRegimeLabels(ax, colUpsampled, colS3Q)
+    colStandard = [0.34, 0.34, 0.34];
+    fontSize = 9;
+
+    xLabel = -5.72;
+    yLabel = [2.65, 2.65-0.5, 2.65-1.0];
+    labels = {'standard quadrature', 'upsampled quadrature', 'special quadrature (S3Q)'};
+    colors = [colStandard; colUpsampled; colS3Q];
+
+    for ilabel = 1:numel(labels)
+        text(ax, xLabel, yLabel(ilabel), labels{ilabel}, ...
+            'Color', colors(ilabel,:), ...
+            'FontSize', fontSize, ...
+            'HorizontalAlignment', 'left', ...
+            'VerticalAlignment', 'middle');
+    end
 end
 
 function drawEllipseOutline(ax, a, c, scale, center, angleDeg, color, lineWidth)
