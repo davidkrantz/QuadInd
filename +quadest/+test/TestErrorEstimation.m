@@ -34,6 +34,126 @@ classdef TestErrorEstimation < quadest.test.TestBase
             obj.assertSize(qtheta, [1, 3]);
         end
 
+        function test_densitymodifier_matches_local_linear_continuation(obj)
+            grid = quadest.grid.AxsymGrid(obj.geom, 'nth', 18, 'nph', 32);
+            [theta, phi] = grid.meshgrid();
+            density = [phi(:), theta(:), 2*phi(:) - 3*theta(:)];
+            alpha = 0.7;
+            target = [0.09*cos(alpha), 0.09*sin(alpha), 0.04];
+
+            [qphi, qtheta, phi0] = ...
+                quadest.errorest.DensityModifier.computeDensityAtRoots( ...
+                    grid, target, density);
+            [itheta, iphi] = ...
+                quadest.errorest.UniformEstimateBuilder.findNearestNodes(grid, target);
+            thetaStar = grid.theta(itheta);
+            phiStar = grid.phi(iphi);
+            theta0 = obj.geom.findThetaRoot(target, phiStar);
+
+            expectedPhi = [phi0, thetaStar, 2*phi0 - 3*thetaStar];
+            expectedTheta = [phiStar, theta0, 2*phiStar - 3*theta0];
+            obj.assertAlmostEqual(qphi, expectedPhi, 1e-11);
+            obj.assertAlmostEqual(qtheta, expectedTheta, 1e-10);
+        end
+
+        function test_densitymodifier_smooth_continuation_converges(obj)
+            target = [0.065*cos(2*pi-0.03), 0.065*sin(2*pi-0.03), 0.035];
+            errors = zeros(2,2);
+            resolutions = [16, 24; 32, 48];
+            for k = 1:2
+                grid = quadest.grid.AxsymGrid(obj.geom, ...
+                    'nth', resolutions(k,1), 'nph', resolutions(k,2));
+                [theta, phi] = grid.meshgrid();
+                density = [cos(2*phi(:)), cos(2*theta(:)), ...
+                    cos(2*phi(:)).*cos(2*theta(:))];
+                [qphi, qtheta, phi0] = ...
+                    quadest.errorest.DensityModifier.computeDensityAtRoots( ...
+                        grid, target, density);
+                [~, iphi] = ...
+                    quadest.errorest.UniformEstimateBuilder.findNearestNodes(grid, target);
+                theta0 = obj.geom.findThetaRoot(target, grid.phi(iphi));
+                errors(k,1) = abs(qphi(1) - cos(2*phi0));
+                errors(k,2) = abs(qtheta(2) - cos(2*theta0));
+            end
+            obj.assertTrue(all(errors(2,:) < errors(1,:)), ...
+                sprintf('Complex density interpolation did not converge: %s', mat2str(errors)));
+        end
+
+        function test_complex_geometry_factors_are_bilinear(obj)
+            target = [0.08, 0.03, 0.04];
+            thetaStar = 1.1;
+            [phi0, Gphi] = quadest.errorest.RootFinder.computePhiRoot( ...
+                obj.geom, target, thetaStar);
+            rphi = obj.geom.evaluate(thetaStar, phi0) - target;
+            expectedPhi = 2 * sum(rphi .* obj.geom.drdphi(thetaStar, phi0), 2);
+            obj.assertAlmostEqual(Gphi, expectedPhi, 1e-12);
+
+            theta0 = obj.geom.findThetaRoot(target, 0);
+            [~, Gtheta] = quadest.errorest.RootFinder.computeThetaRoot( ...
+                obj.geom, target, 0, 1); %#ok<ASGLU>
+            rtheta = obj.geom.evaluate(theta0, 0) - target;
+            expectedTheta = pi * sum(rtheta .* obj.geom.drdtheta(theta0, 0), 2);
+            obj.assertAlmostEqual(Gtheta, expectedTheta, 1e-12);
+        end
+
+        function test_spheroid_roots_satisfy_analytic_equation(obj)
+            geometries = {obj.geom, ...
+                quadest.geometry.Spheroid('a', 0.1, 'c', 0.04), ...
+                quadest.geometry.Spheroid('a', 0.08, 'c', 0.08)};
+            targets = [0.06, 0, 0.04; 0.03, 0.02, 0.09; 0, 0, 0.12];
+            phi = mod(atan2(targets(:,2), targets(:,1)), 2*pi);
+            for k = 1:numel(geometries)
+                roots = geometries{k}.findThetaRoot(targets, phi);
+                displacement = geometries{k}.evaluate(roots, phi) - targets;
+                residual = abs(sum(displacement.^2, 2)) ./ ...
+                    max(sum(abs(displacement).^2, 2), realmin);
+                obj.assertTrue(all(isfinite(roots)));
+                obj.assertTrue(max(residual) < 1e-9, ...
+                    sprintf('Maximum normalized root residual was %.3e.', max(residual)));
+            end
+        end
+
+        function test_densitymodifier_axis_is_explicit_and_finite(obj)
+            grid = quadest.grid.AxsymGrid(obj.geom, 'nth', 12, 'nph', 16);
+            density = ones(grid.numPoints(), 3);
+            [qphi, qtheta, phi0] = ...
+                quadest.errorest.DensityModifier.computeDensityAtRoots( ...
+                    grid, [0, 0, 0.2], density);
+            obj.assertAlmostEqual(qphi, zeros(1,3), 0);
+            obj.assertAlmostEqual(qtheta, ones(1,3), 1e-12);
+            obj.assertTrue(isinf(imag(phi0)));
+
+            estimate = quadest.errorest.UniformEstimateBuilder.computeDirectEstimates( ...
+                obj.geom, grid, obj.kernel, [0, 0, 0.2], density);
+            obj.assertTrue(isfinite(estimate) && estimate >= 0);
+        end
+
+        function test_estimator_rejects_wrong_density_component_count(obj)
+            cfg = quadest.util.Config('ntab', 12, 'nztab', 12);
+            estimator = quadest.errorest.ErrorEstimator(obj.geom, obj.kernel, ...
+                'nth', 10, 'nph', 16, 'upsampFactors', 1, 'config', cfg);
+            density = ones(10*16, 2);
+            obj.assertError(@() estimator.evaluate([0.2, 0, 0], density), ...
+                'quadest:ErrorEstimator:invalidDensity');
+        end
+
+        function test_tabulation_safety_factor_scales_indicator(obj)
+            cfg1 = quadest.util.Config('ntab', 20, 'nztab', 20, ...
+                'tabulationSafetyFactor', 1);
+            cfg2 = quadest.util.Config('ntab', 20, 'nztab', 20, ...
+                'tabulationSafetyFactor', 2);
+            estimator1 = quadest.errorest.ErrorEstimator(obj.geom, obj.kernel, ...
+                'nth', 10, 'nph', 16, 'upsampFactors', 1, 'config', cfg1);
+            estimator2 = quadest.errorest.ErrorEstimator(obj.geom, obj.kernel, ...
+                'nth', 10, 'nph', 16, 'upsampFactors', 1, 'config', cfg2);
+            target = [0.12, 0.03, 0.04];
+            density = ones(10*16, 3);
+            estimate1 = estimator1.evaluate(target, density);
+            estimate2 = estimator2.evaluate(target, density);
+            obj.assertAlmostEqual(estimate2, 2*estimate1, ...
+                1e-12*max(1, estimate2));
+        end
+
         function test_densitymodifier_rotates_to_target_frame(obj)
             % Root densities are global Cartesian vectors; modifiers use
             % radial, azimuthal, and axial components at each target.
@@ -257,8 +377,9 @@ classdef TestErrorEstimation < quadest.test.TestBase
             estimator = quadest.errorest.ErrorEstimator(obj.geom, obj.kernel, ...
                 'nth', 10, 'nph', 16, 'upsampFactors', 1:2);
             
-            % Far-field targets where estimates are well-behaved
-            targets = [0.5, 0, 0; 0, 0.5, 0; 0, 0, 0.5; 0.2, 0.2, 0.2];
+            % Exterior targets whose direct indicators remain above the
+            % floating-point lower bound used by the tabulation.
+            targets = [0.15, 0, 0; 0, 0.15, 0; 0, 0, 0.25; 0.12, 0.08, 0.15];
             density = ones(10*16, 3);
             
             est_tab = estimator.evaluate(targets, density);
@@ -268,10 +389,14 @@ classdef TestErrorEstimation < quadest.test.TestBase
             obj.assertTrue(all(est_dir > 0), 'Direct estimates should be positive');
             obj.assertTrue(all(isfinite(est_dir)), 'Direct estimates should be finite');
             
-            % Both methods should agree within ~1 order of magnitude for unit density
+            % Both methods should agree within one order of magnitude for unit density
             ratio = log10(est_tab) - log10(est_dir);
-            obj.assertTrue(all(abs(ratio) < 2), ...
-                sprintf('Tabulated and direct should be within 2 orders of magnitude (max ratio: %.1f)', max(abs(ratio))));
+            meaningful = est_dir > 1e-10;
+            obj.assertTrue(any(meaningful), 'Expected meaningful direct indicators.');
+            obj.assertTrue(all(abs(ratio(meaningful)) < 1), ...
+                sprintf(['Tabulated and direct should be within 1 order of magnitude ' ...
+                'above the numerical floor (max ratio: %.1f)'], ...
+                max(abs(ratio(meaningful)))));
         end
         
         function test_evaluateDirect_smooth_density(obj)

@@ -120,7 +120,7 @@ classdef Plotting
             FS = p.Results.FontSize;
             
             % Compute error at each target
-            err = sqrt(sum((u - uref).^2, 2));
+            err = vecnorm(u - uref, 2, 2);
             
             % Compute distance to nearest surface point
             [itheta,iphi] = quadest.errorest.UniformEstimateBuilder.findNearestNodes(gridSurf, targets);

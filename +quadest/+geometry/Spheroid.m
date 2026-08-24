@@ -113,17 +113,20 @@ classdef Spheroid < quadest.geometry.AxsymGeometry
                 phi (:,1) {mustBeNumeric}
             end
             
-            if obj.a == obj.c
-                error('quadest:Spheroid:degenerateCase', ...
-                    'Spheroid with a == c is degenerate (sphere). Use different geometry.');
+            delta = obj.a^2 - obj.c^2;
+            if abs(delta) <= sqrt(eps) * max(obj.a^2, obj.c^2)
+                % The quartic loses its leading coefficient in the spherical
+                % limit, use instead Newton solver
+                theta0 = findThetaRoot@quadest.geometry.AxsymGeometry( ...
+                    obj, targets, phi);
+                return;
             end
             
             M = size(targets, 1);
             Aa = obj.a;
             Ca = obj.c;
             
-            % Quartic coefficients
-            delta = Aa^2 - Ca^2;
+            % Quartic coefficients for beta=exp(i*theta)
             tau = Ca * targets(:,3) + 1i * Aa * (targets(:,1) .* cos(phi) + targets(:,2) .* sin(phi));
             d2 = targets(:,1).^2 + targets(:,2).^2 + targets(:,3).^2 + Ca^2;
             
@@ -168,6 +171,36 @@ classdef Spheroid < quadest.geometry.AxsymGeometry
             for ii = 1:M
                 theta0(ii) = theta_all(ii, idx(ii));
             end
+
+            % Optionally use MATLAB's polynomial root solver instead of
+            % explicit Ferrari formula (may be more robust). Convert each
+            % beta root with theta=-i*log(beta), include adjacent 2*pi
+            % representatives, and choose the root closest to [0,pi].
+            % theta0 = zeros(M, 1);
+            % for ii = 1:M
+            %     beta = roots([A, B(ii), C(ii), D(ii), E]);
+            %     thetaPrincipal = -1i * log(beta);
+            %     thetaCandidates = [thetaPrincipal - 2*pi; ...
+            %                        thetaPrincipal; thetaPrincipal + 2*pi];
+            %     re = real(thetaCandidates);
+            %     intervalOffset = max(0, -re) + max(0, re - pi);
+            %     distance = hypot(intervalOffset, imag(thetaCandidates));
+
+            %     residual = abs(sum((obj.evaluate(thetaCandidates, ...
+            %         phi(ii) * ones(size(thetaCandidates))) - targets(ii,:)).^2, 2));
+            %     scale = max(sum(abs(obj.evaluate(thetaCandidates, ...
+            %         phi(ii) * ones(size(thetaCandidates)))).^2, 2), obj.a^2 + obj.c^2);
+            %     normalizedResidual = residual ./ scale;
+            %     valid = isfinite(thetaCandidates) & normalizedResidual < 1e-8;
+            %     distance(~valid) = Inf;
+            %     [bestDistance, idx] = min(distance);
+            %     if ~isfinite(bestDistance)
+            %         theta0(ii) = findThetaRoot@quadest.geometry.AxsymGeometry( ...
+            %             obj, targets(ii,:), phi(ii));
+            %     else
+            %         theta0(ii) = thetaCandidates(idx);
+            %     end
+            % end
         end
         
         function disp(obj)

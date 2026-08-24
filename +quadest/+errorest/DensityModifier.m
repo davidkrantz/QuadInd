@@ -44,7 +44,12 @@ classdef DensityModifier
             end
             
             ncomp = size(density, 2);
-            
+            if size(density, 1) ~= grid.numPoints()
+                error('quadest:DensityModifier:invalidDensity', ...
+                    'Density must have %d rows (got %d).', ...
+                    grid.numPoints(), size(density, 1));
+            end
+
             % Reshape density for easier indexing: [nth × nph × ncomp]
             dens_3d = reshape(density, grid.nth, grid.nph, ncomp);
 
@@ -57,7 +62,14 @@ classdef DensityModifier
             phi0 = quadest.errorest.RootFinder.computePhiRoot(grid.geometry, targets, theta_star);
             
             % Evaluate density at phi roots using 2-point linear interpolation
-            [qphi, intpind] = quadest.errorest.DensityModifier.interpDensityPhi(grid, dens_3d, phi0, itheta_star);
+            onAxis = hypot(targets(:,1), targets(:,2)) == 0;
+            qphi = zeros(size(targets,1), ncomp);
+            intpind = NaN(size(targets,1), 2);
+            if any(~onAxis)
+                [qphi(~onAxis,:), intpind(~onAxis,:)] = ...
+                    quadest.errorest.DensityModifier.interpDensityPhi( ...
+                        grid, dens_3d, phi0(~onAxis), itheta_star(~onAxis));
+            end
             
             % Compute theta roots if not provided
             if isempty(theta0)

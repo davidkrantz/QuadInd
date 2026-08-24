@@ -51,6 +51,11 @@ classdef UniformEstimateBuilder
             nfac = length(upsampFactors);
             ncomp = kernel.numComponents();
             p = kernel.singularityOrder();
+
+            if ~isa(kernel, 'quadest.kernel.StokesStresslet') || ncomp ~= 3
+                error('quadest:UniformEstimateBuilder:unsupportedKernel', ...
+                    'UniformEstimateBuilder currently supports only StokesStresslet.');
+            end
             
             % Build tabulation grid
             [tabGrid, evalPoints, evalMask] = quadest.errorest.UniformEstimateBuilder.buildTabGrid(geometry, config);
@@ -183,7 +188,7 @@ classdef UniformEstimateBuilder
             %   density  - [N×ncomp] density on grid (N = nth*nph)
             %
             % Outputs:
-            %   estimates - [M×1] scalar error estimates
+            %   estimates - [M×1] componentwise infinity-norm error indicators
 
             ncomp = kernel.numComponents();
             p = kernel.singularityOrder();
@@ -297,12 +302,16 @@ classdef UniformEstimateBuilder
             [phi0, Gphi] = quadest.errorest.RootFinder.computePhiRoot(geometry, target, theta_star);
             
             % --- Theta root ---
-            if target(3) ~= 0 && isa(geometry, 'quadest.geometry.Spheroid')
+            if isa(geometry, 'quadest.geometry.Spheroid')
                 theta0 = geometry.findThetaRoot(target, phi_star);
             else
                 t_star = (2/pi) * theta_star - 1;
-                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(...
+                [t0, converged] = quadest.errorest.RootFinder.newtonSolve(...
                     geometry, target, phi_star, t_star, dfac);
+                if ~converged
+                    error('quadest:UniformEstimateBuilder:thetaRootFailure', ...
+                        'Theta-root Newton iteration failed for target [%g %g %g].', target);
+                end
                 theta0 = dfac * (t0 + 1);
             end
             t0 = (2/pi) * theta0 - 1;
@@ -311,7 +320,7 @@ classdef UniformEstimateBuilder
             gamma_final = geometry.evaluate(theta0, phi_star);
             dgamma_final = dfac * geometry.drdtheta(theta0, phi_star);
             r_theta = gamma_final - target;
-            Gtheta = 2 * dot(r_theta, dgamma_final);
+            Gtheta = 2 * sum(r_theta .* dgamma_final);
             
             % --- Geometry at closest point (shared by kernel + semiRoot) ---
             at_star = geometry.at(theta_star);
@@ -344,13 +353,14 @@ classdef UniformEstimateBuilder
             norm_drdtheta = sqrt(dp_drdt2);
             norm_drdphi = sqrt(dp_drds2);
             C_TZ = grid.nph * norm_drdtheta / norm_drdphi;
-            C_GL = max(grid.nth * norm_drdphi / norm_drdtheta, grid.nth);
+            C_GL = 2 * grid.nth * norm_drdphi / norm_drdtheta;
             
             pm1 = p - 1;
             
             % ===============================================
             % Phi direction estimate (trapezoidal rule)
             % ===============================================
+            onAxis = hypot(target(1), target(2)) == 0;
             ds_phi = xlag / C_TZ;
             dp0_ref = quadest.errorest.UniformEstimateBuilder.semiRootEval(...
                 dp_r2, dp_r_drdt, dp_drdt2, dp_r_drds, dp_dt_ds, dp_drds2, 0);
@@ -363,6 +373,9 @@ classdef UniformEstimateBuilder
             estTZ_both = zeros(2, 3);
             
             for ii = 1:2
+                if onAxis
+                    continue;
+                end
                 phi0_test = phi0_candidates(ii);
                 
                 % Inline kernel at phi root — precomputed geometry at theta_star
@@ -372,8 +385,8 @@ classdef UniformEstimateBuilder
                              dadt_star * at_star];
                 
                 % Integration (identical for all components)
-                dtpos = phi0_test + dp0_pos - dp0_ref;
-                dtneg = phi0_test + dp0_neg - dp0_ref;
+                dtpos = phi0_test - dp0_pos + dp0_ref;
+                dtneg = phi0_test - dp0_neg + dp0_ref;
                 
                 int_pos = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtpos, grid.nph, pm1);
                 int_neg = quadest.errorest.UniformEstimateBuilder.trapzErrFunc(dtneg, grid.nph, pm1);
@@ -422,9 +435,8 @@ classdef UniformEstimateBuilder
                                   -dcdt_t0 * at_t0 * sin(phi_star), ...
                                    dadt_t0 * at_t0];
                 
-                % Integration (identical for all components)
-                dtpos = t0_test - (dt0_pos - dt0_ref);
-                dtneg = t0_test - (dt0_neg - dt0_ref);
+                dtpos = t0_test - dt0_pos + dt0_ref;
+                dtneg = t0_test - dt0_neg + dt0_ref;
                 
                 int_pos = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtpos, grid.nth, pm1);
                 int_neg = quadest.errorest.UniformEstimateBuilder.glErrFunc(dtneg, grid.nth, pm1);

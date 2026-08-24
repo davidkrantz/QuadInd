@@ -142,6 +142,11 @@ end
 
 ## Adding New Kernels
 
+The grid-level `Kernel` interface is extensible, but `ErrorEstimator` currently
+supports only `StokesStresslet`: its precomputed numerator and three-component
+collapse are stresslet-specific. A new estimatable kernel also requires a
+kernel-specific error-numerator interface in `UniformEstimateBuilder`.
+
 Subclass `quadest.kernel.Kernel` and implement:
 
 ```matlab

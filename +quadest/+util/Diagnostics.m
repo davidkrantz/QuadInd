@@ -124,7 +124,9 @@ classdef Diagnostics
             end
 
             displacement = geometry.evaluate(roots, phi) - targets;
-            residual = abs(sum(displacement.^2, 2));
+            residualAbs = abs(sum(displacement.^2, 2));
+            residualScale = max(sum(abs(displacement).^2, 2), realmin);
+            residual = residualAbs ./ residualScale;
             valid = isfinite(roots) & residual <= tol;
 
             if any(~valid)

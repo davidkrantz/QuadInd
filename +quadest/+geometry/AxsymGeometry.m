@@ -68,8 +68,13 @@ classdef (Abstract) AxsymGeometry
                 t_init = 2*theta_init/pi - 1;
                 
                 % Closure-free Newton solve
-                [t0, ~] = quadest.errorest.RootFinder.newtonSolve(...
+                [t0, converged] = quadest.errorest.RootFinder.newtonSolve(...
                     obj, targets(i,:), phi(i), t_init, dfac, config);
+                if ~converged
+                    error('quadest:AxsymGeometry:thetaRootFailure', ...
+                        'Theta-root Newton iteration failed for target [%g %g %g].', ...
+                        targets(i,:));
+                end
                 
                 theta0(i) = dfac * (t0 + 1);
             end

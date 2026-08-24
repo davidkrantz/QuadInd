@@ -38,19 +38,30 @@ classdef RootFinder
             lambda = (1 ./ (2 * at_val)) .* ...
                 ((at_val.^2 + x.^2 + y.^2 + (ct_val - z).^2) ./ rxy);
             
-            phi0 = mod(atan2(y, x), 2*pi) + 1i * log(lambda - sqrt(lambda.^2 - 1));
+            alpha = mod(atan2(y, x), 2*pi);
+            phi0 = alpha - 1i * acosh(lambda);
+
+            % There is no finite azimuthal distance root on the symmetry
+            % axis. Represent it explicitly as a root at infinity; callers
+            % then omit the (spectrally exact) azimuthal contribution.
+            onAxis = rxy == 0;
+            phi0(onAxis) = complex(alpha(onAxis), Inf);
             
             % Compute geometric factor G = 2 * dot(gamma(phi0) - target, dgamma/dphi(phi0))
-            % Note: MATLAB's dot() conjugates the first argument for complex vectors,
-            % which matches the legacy implementation.
             if nargout > 1
-                gamma_phi0 = geometry.evaluate(theta_star, phi0);
-                dgamma_phi0 = geometry.drdphi(theta_star, phi0);
-                
-                r = gamma_phi0 - targets;
-                % Vectorized row-wise dot product (dot() conjugates first arg
-                % for complex vectors, matching legacy behavior)
-                Gphi = 2 * sum(conj(r) .* dgamma_phi0, 2);
+                Gphi = complex(zeros(size(phi0)));
+                finiteRoot = ~onAxis;
+                % R^2 is analytically continued as sum(r_i^2), so its
+                % derivative is the bilinear product 2*sum(r_i*gamma'_i)
+                if any(finiteRoot)
+                    gamma_phi0 = geometry.evaluate( ...
+                        theta_star(finiteRoot), phi0(finiteRoot));
+                    dgamma_phi0 = geometry.drdphi( ...
+                        theta_star(finiteRoot), phi0(finiteRoot));
+                    r = gamma_phi0 - targets(finiteRoot,:);
+                    Gphi(finiteRoot) = 2 * sum(r .* dgamma_phi0, 2);
+                end
+                Gphi(onAxis) = Inf;
             end
         end
         
@@ -76,8 +87,6 @@ classdef RootFinder
             theta0 = geometry.findThetaRoot(targets, phi_star);
             
             % Compute geometric factor
-            % Note: MATLAB's dot() conjugates the first argument for complex vectors,
-            % which matches the legacy implementation.
             if nargout > 1
                 % Use linear map t = 2*theta/pi - 1 for geometric factor
                 imap = @(t) (pi/2) * (t + 1);
@@ -89,9 +98,7 @@ classdef RootFinder
                 dgamma_t0 = dfac * geometry.drdtheta(imap(t0), phi_star);
                 
                 r = gamma_t0 - targets;
-                % Vectorized row-wise dot product (dot() conjugates first arg
-                % for complex vectors, matching legacy behavior)
-                Gtheta = 2 * sum(conj(r) .* dgamma_t0, 2);
+                Gtheta = 2 * sum(r .* dgamma_t0, 2);
             end
         end
         
@@ -136,9 +143,12 @@ classdef RootFinder
                 rv = gval - target;
                 R2v = sum(rv.^2, 2);
                 R2tv = 2 * sum(rv .* dgval, 2);
+                if ~isfinite(R2tv) || abs(R2tv) <= eps * max(1, abs(R2v))
+                    break;
+                end
                 step = R2v / R2tv;
                 t0 = t0 - step;
-                if abs(step) < tol
+                if isfinite(t0) && abs(step) < tol
                     converged = true;
                     return;
                 end
@@ -156,9 +166,12 @@ classdef RootFinder
                     rv = gval - target;
                     R2v = sum(rv.^2, 2);
                     R2tv = 2 * sum(rv .* dgval, 2);
+                    if ~isfinite(R2tv) || abs(R2tv) <= eps * max(1, abs(R2v))
+                        break;
+                    end
                     step = R2v / R2tv;
                     t0 = t0 - stepScale * step;
-                    if abs(step) < tol
+                    if isfinite(t0) && abs(stepScale * step) < tol
                         converged = true;
                         return;
                     end

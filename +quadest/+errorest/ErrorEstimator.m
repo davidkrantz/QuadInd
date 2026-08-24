@@ -72,9 +72,19 @@ classdef ErrorEstimator < handle
             
             obj.geometry = geometry;
             obj.kernel = kernel;
+            if ~isa(kernel, 'quadest.kernel.StokesStresslet')
+                error('quadest:ErrorEstimator:unsupportedKernel', ...
+                    'ErrorEstimator currently supports only StokesStresslet.');
+            end
             obj.config = p.Results.config;
             obj.config.nth = p.Results.nth;
             obj.config.nph = p.Results.nph;
+            if ~isscalar(obj.config.tabulationSafetyFactor) || ...
+                    ~isfinite(obj.config.tabulationSafetyFactor) || ...
+                    obj.config.tabulationSafetyFactor < 1
+                error('quadest:ErrorEstimator:invalidTabulationSafetyFactor', ...
+                    'tabulationSafetyFactor must be a finite scalar >= 1.');
+            end
             obj.upsampFactors = unique([1, p.Results.upsampFactors]);
             obj.interpolateRoots = p.Results.interpolateRoots;
             
@@ -103,7 +113,7 @@ classdef ErrorEstimator < handle
             %   'tol' - Error tolerance for classification (optional)
             %
             % Outputs:
-            %   estimates - [M×1] error estimate per target
+            %   estimates - [M×1] componentwise infinity-norm error indicator
             %
             % If 'tol' is provided, also returns classification struct:
             %   classification.upsampfac - [M×1] recommended upsampling factor
@@ -131,6 +141,11 @@ classdef ErrorEstimator < handle
                 error('quadest:ErrorEstimator:invalidDensity', ...
                     'Density must have %d rows (got %d)', expectedN, size(density, 1));
             end
+            if size(density, 2) ~= obj.kernel.numComponents()
+                error('quadest:ErrorEstimator:invalidDensity', ...
+                    'Density must have %d columns (got %d)', ...
+                    obj.kernel.numComponents(), size(density, 2));
+            end
             
             M = size(targets, 1);
             ncomp = obj.kernel.numComponents();
@@ -138,25 +153,51 @@ classdef ErrorEstimator < handle
             % Map targets to interpolation coordinates
             rxy = sqrt(targets(:,1).^2 + targets(:,2).^2);
             zabs = abs(targets(:,3));
+            maxExtent = 2 * (obj.geometry.maxRadius() + obj.geometry.maxHeight());
+            insideTabulation = rxy <= maxExtent & zabs <= maxExtent;
+            % Holding the boundary value is conservative for the far field
+            % and avoids uncontrolled linear extrapolation of log indicators.
+            rquery = min(rxy, maxExtent);
+            zquery = min(zabs, maxExtent);
             
             % Interpolate uniform estimates (for direct quadrature, upfac=1)
             estval = zeros(M, ncomp);
             for c = 1:ncomp
-                estval(:, c) = 10.^(obj.interpolants{1, c}(rxy, zabs));
+                estval(:, c) = 10.^(obj.interpolants{1, c}(rquery, zquery));
             end
+            estval = obj.config.tabulationSafetyFactor * estval;
             
             % Compute density modification
             if obj.interpolateRoots && ~isempty(obj.rootInterpolants)
                 % Use interpolated theta roots
-                theta0_interp = obj.rootInterpolants.Re{1}(rxy, zabs) + ...
-                                1i * obj.rootInterpolants.Im{1}(rxy, zabs);
+                theta0_interp = obj.rootInterpolants.Re{1}(rquery, zquery) + ...
+                                1i * obj.rootInterpolants.Im{1}(rquery, zquery);
                 % Root tables use the z >= 0 half-plane. Map the cached root
                 % back to the physical hemisphere for reflected targets.
                 negz = targets(:,3) < 0;
                 theta0_interp(negz) = pi - theta0_interp(negz);
+
+                % % Extra check: bad root
+                % [~, iphi] = quadest.errorest.UniformEstimateBuilder.findNearestNodes( ...
+                %     obj.grid, targets);
+                % phi_star = obj.grid.phi(iphi).';
+                % rootResidual = Inf(M,1);
+                % if any(insideTabulation)
+                %     displacement = obj.geometry.evaluate( ...
+                %         theta0_interp(insideTabulation), phi_star(insideTabulation)) ...
+                %         - targets(insideTabulation,:);
+                %     rootResidual(insideTabulation) = abs(sum(displacement.^2,2)) ./ ...
+                %         max(sum(abs(displacement).^2,2), realmin);
+                % end
+                % invalidRoot = ~insideTabulation | ~isfinite(theta0_interp) | ...
+                %     rootResidual > obj.config.interpolatedRootResidualTolerance;
+                % if any(invalidRoot)
+                %     theta0_interp(invalidRoot) = obj.geometry.findThetaRoot( ...
+                %         targets(invalidRoot,:), phi_star(invalidRoot));
+                % end
+
                 [qphi, qtheta, ~, ~] = quadest.errorest.DensityModifier.computeDensityAtRoots(...
-                    obj.grid, targets, density, theta0_interp, ...
-                    obj.config.interpolatedRootResidualTolerance);
+                    obj.grid, targets, density, theta0_interp);
             else
                 % Compute theta roots on-the-fly
                 [qphi, qtheta, ~, ~] = quadest.errorest.DensityModifier.computeDensityAtRoots(...
@@ -173,7 +214,7 @@ classdef ErrorEstimator < handle
             
             % Classification (only if tolerance provided)
             if ~isempty(tol) && nargout > 1
-                classification = obj.classifyTargets(targets, density, modifier, tol, rxy, zabs);
+                classification = obj.classifyTargets(targets, density, modifier, tol, rquery, zquery);
             elseif nargout > 1
                 classification = [];
             end
@@ -224,7 +265,7 @@ classdef ErrorEstimator < handle
             %   density - [N×ncomp] density on grid (N = nth*nph)
             %
             % Outputs:
-            %   estimates - [M×1] error estimate per target
+            %   estimates - [M×1] componentwise infinity-norm error indicator
             %
             % See also: evaluate, quadest.errorest.UniformEstimateBuilder.computeDirectEstimates
             
@@ -246,6 +287,11 @@ classdef ErrorEstimator < handle
             if size(density, 1) ~= expectedN
                 error('quadest:ErrorEstimator:invalidDensity', ...
                     'Density must have %d rows (got %d)', expectedN, size(density, 1));
+            end
+            if size(density, 2) ~= obj.kernel.numComponents()
+                error('quadest:ErrorEstimator:invalidDensity', ...
+                    'Density must have %d columns (got %d)', ...
+                    obj.kernel.numComponents(), size(density, 2));
             end
             
             result = quadest.errorest.UniformEstimateBuilder.computeDirectEstimates(...
@@ -279,6 +325,7 @@ classdef ErrorEstimator < handle
                 for c = 1:ncomp
                     estval(:, c) = 10.^(obj.interpolants{upfac, c}(rxy, zabs));
                 end
+                estval = obj.config.tabulationSafetyFactor * estval;
                 
                 % Modified estimate
                 estimate_up = sum(estval .* modifier, 2);
