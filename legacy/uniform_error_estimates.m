@@ -485,13 +485,17 @@ function knq = gl_errfunc_deriv(z, n, q)
 % qth derivative of the Gauss-Legendre error function,
 % returns absolute value
 
-% Transform to first quadrant
-z = abs(real(z)) + 1i*(imag(z));
+% Branch cut handling according to paper
+sq = sqrt(z+1).*sqrt(z-1);
+rho = z + sq;
+knq = 2 * pi ./ rho.^(2*n + 1);
 
-
-knq = 2*pi./(z + sqrt(z.^2-1)).^(2*n+1);
+% Legacy parity version, using MATLAB's principal branch directly:
+% z = abs(real(z)) + 1i * imag(z);
+% sq = sqrt(z.^2 - 1);
+% knq = 2 * pi ./ (z + sq).^(2*n + 1);
 if q ~= 0
-  knq = knq .* (-(2*n+1)./sqrt(z.^2-1)).^q;
+  knq = knq .* (-(2*n + 1) ./ sq).^q;
 end
 
 knq = abs(knq);
