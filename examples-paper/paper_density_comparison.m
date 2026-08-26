@@ -20,17 +20,17 @@ c = 0.5;
 center2 = [0, 0, 1.0025];  % Center of body 2
 
 % Reference and evaluation
-refFactor = 15;
+refFactor = 10;
 
 % Target grid
 Ngrid = 300;
-xv = linspace(-0.06, 0.06, Ngrid);
-zv = linspace(0.45, 0.55, Ngrid);
+xv = linspace(-0.25, 0.25, Ngrid);
+zv = linspace(0, 1, Ngrid);
 
 % Plot settings
 FS = 16;
 levels = 0:-2:-10;
-savefig = 0;
+savefig = false;
 
 fprintf('=== DENSITY COMPARISON FIGURE ===\n\n');
 
@@ -99,15 +99,17 @@ fprintf('  Body 2: reference (factor %d)...\n', refFactor);
 u2_ref = kernel.evaluateUpsampled(targets_ext_shifted, grid, density2, refFactor);
 fprintf('  Kernel evaluation time: %.2f s\n', toc);
 
-err1 = sum((u1_direct-u1_ref).^2,2).^(1/2);
-err2 = sum((u2_direct-u2_ref).^2,2).^(1/2);
+% Plot the rotationally invariant magnitude of the velocity error.
+err1 = vecnorm(u1_direct - u1_ref, 2, 2);
+err2 = vecnorm(u2_direct - u2_ref, 2, 2);
 
-% Combined: max over both bodies
+% Maximum of the two Euclidean body errors.
 measured_error = max(err1, err2);
+total_error = vecnorm( ...
+    (u1_direct + u2_direct) - (u1_ref + u2_ref), 2, 2);
 
 fprintf('  Body 1 error: max = %.2e, median = %.2e\n', max(err1), median(err1));
 fprintf('  Body 2 error: max = %.2e, median = %.2e\n', max(err2), median(err2));
-fprintf('  Combined error: max = %.2e, median = %.2e\n', max(measured_error), median(measured_error));
 
 %% Step 5: Compute error estimates
 fprintf('\nStep 5: Compute error estimates\n');
@@ -122,11 +124,17 @@ est_with_density = max(est1_wd, est2_wd);
 unit_density = ones(N, 3);
 est1_nd = estimator.evaluate(targets_ext, unit_density);
 est2_nd = estimator.evaluate(targets_ext_shifted, unit_density);
+% Global max-norm density factor per particle:
+% max over all grid nodes of the vector infinity norm of the density.
+global_factor1 = max(vecnorm(density1, inf, 2));
+global_factor2 = max(vecnorm(density2, inf, 2));
+est1_nd = est1_nd .* global_factor1;
+est2_nd = est2_nd .* global_factor2;
 est_without_density = max(est1_nd, est2_nd);
 fprintf('  Estimation time: %.2f s\n', toc);
 
-fprintf('  With density:    max = %.2e, median = %.2e\n', max(est_with_density), median(est_with_density));
-fprintf('  Without density: max = %.2e, median = %.2e\n', max(est_without_density), median(est_without_density));
+fprintf('  With local density modifier:    max = %.2e, median = %.2e\n', max(est_with_density), median(est_with_density));
+fprintf('  Without global density scaling: max = %.2e, median = %.2e\n', max(est_without_density), median(est_without_density));
 
 %% Step 6: Plot 2-panel figure
 close all;
@@ -135,13 +143,13 @@ fprintf('\nStep 6: Generate figure\n');
 panelData = {est_with_density, est_without_density};
 
 for ip = 1:2
-    figure('DefaultAxesFontSize',FS);
+    figure('DefaultAxesFontSize',FS, 'Position', [100, 100, 1100, 550]);
 
     estimates = panelData{ip};
 
     % Reshape to grid (log10 scale)
     err_full = NaN(numel(mask_ext), 1);
-    err_full(mask_ext) = log10(abs(measured_error) + eps);
+    err_full(mask_ext) = log10(measured_error + eps);
     Err = reshape(err_full, Ngrid, Ngrid);
 
     est_full = NaN(numel(mask_ext), 1);
@@ -155,21 +163,24 @@ for ip = 1:2
     Err(isinf(Err)) = -16;
     Est(isinf(Est)) = -16;
 
-    % Plot
-    contourf(X, Z, Err, levels, 'LineColor', 'none');
+    % Plot (rotated 90 degrees: z horizontal, x vertical)
+    contourf(Z, X, Err, levels, 'LineColor', 'none');
     hold on;
-    [C, h] = contour(X, Z, Est, levels(2:end), '-k', 'LineWidth', 2);
-    clabel(C, h, 'LabelSpacing', 50000, 'FontSize', 14, 'Color', 'k', 'Interpreter', 'latex');
+    [C, h] = contour(Z, X, Est, levels(2:end), '-k', 'LineWidth', 2);
+    clabel(C, h, 'LabelSpacing', 500, 'FontSize', FS, 'Color', 'k', 'Interpreter', 'latex', ...
+        'Margin', 1);
 
     if ip == 2
         figure(1);
         col2 = [1 0 1];
-        [C, h] = contour(fliplr(X),Z,fliplr(Est),levels(2:end), '--', 'Color', col2, 'LineWidth', 2);
-        clabel(C, h, 'LabelSpacing', 50000, 'FontSize', 14, 'Color', col2, 'Interpreter', 'latex');
+        [C, h] = contour(Z,fliplr(X),fliplr(Est),levels(2:end), '--', 'Color', col2, 'LineWidth', 2);
+        clabel(C, h, 'LabelSpacing', 500, 'FontSize', FS, 'Color', col2, 'Interpreter', 'latex');
         h1 = plot(nan, nan, 'k-',  'LineWidth', 2); hold on;
         h2 = plot(nan, nan, '--', 'Color', col2, 'LineWidth', 2);
-        legend([h1, h2], {'With density modifier', 'Without density modifier'}, ...
-            'Interpreter', 'latex', 'Location', 'south', 'FontSize', FS);
+        lgd = legend([h1, h2], {'With local density modifier', 'With global density scaling'}, ...
+            'Interpreter', 'latex', 'Location', 'northoutside', 'FontSize', FS, 'NumColumns', 2);
+        lgd.Position(1) = 0.5 - lgd.Position(3)/2;
+        lgd.Position(2) = lgd.Position(2)+0.05;
         figure(2);
     end
 
@@ -180,8 +191,17 @@ for ip = 1:2
     % Colormap
     colormap(gca, quadest.util.Plotting.divergingColormap(length(levels) - 1));
     
-    % Plot first spheroid
-    quadest.util.Plotting.plotSurfaceMesh(grid,'FlipYZ',true);
+    % Plot first spheroid (horizontal/vertical swapped to match rotated view)
+    Xg = reshape(grid.x(:,1), nth, nph);
+    Yg = reshape(grid.x(:,2), nth, nph);
+    Zg = reshape(grid.x(:,3), nth, nph);
+    Xg = [Xg, Xg(:,1)];
+    Yg = [Yg, Yg(:,1)];
+    Zg = [Zg, Zg(:,1)];
+    surf(Zg, Xg, Yg, ...
+        'FaceColor', 0.8*[1 1 1], ...
+        'EdgeColor', [0.3 0.3 0.3], ...
+        'FaceAlpha', 1);
 
     % Plot second sheroid (shifted)
     Xtmp = reshape(grid.x(:,1), nth, nph);
@@ -191,20 +211,19 @@ for ip = 1:2
     Xtmp = [Xtmp, Xtmp(:,1)];
     Ytmp = [Ytmp, Ytmp(:,1)];
     Ztmp = [Ztmp, Ztmp(:,1)];
-    surf(Xtmp, Ztmp, Ytmp, ...
+    surf(Ztmp, Xtmp, Ytmp, ...
         'FaceColor', 0.8*[1 1 1], ...
         'EdgeColor', [0.3 0.3 0.3], ...
         'FaceAlpha', 1);
     axis equal;
 
-    view(0, 90);
     clim([levels(end), levels(1)]);
-    xlim([min(xv), max(xv)]);
-    ylim([min(zv), max(zv)]);
+    xlim([min(zv), max(zv)]);
+    ylim([min(xv), max(xv)]);
 
-    % Labels
-    xlabel('$x$', 'Interpreter', 'latex', 'FontSize', FS);
-    ylabel('$z$', 'Interpreter', 'latex', 'FontSize', FS);
+    % Labels (swapped for 90-degree rotated layout)
+    xlabel('$z$', 'Interpreter', 'latex', 'FontSize', FS);
+    ylabel('$x$', 'Interpreter', 'latex', 'FontSize', FS);
     set(gca, 'FontSize', FS);
 end
 
@@ -225,14 +244,14 @@ dens_wrapped1 = [dens_mat1, dens_mat1(:, 1)];
 dens_mag2 = sqrt(sum(density2.^2, 2));
 dens_mat2 = reshape(dens_mag2, nth, nph);
 dens_wrapped2 = [dens_mat2, dens_mat2(:, 1)];
-figure;
-surf(X2, Z1, Y2, ...
+figure('Position', [100, 100, 1100, 550]);
+surf(Z1, X2, Y2, ...
     'CData', (dens_wrapped1+eps), ...
     'FaceColor', 'interp', ...
     'EdgeColor', 'none', ...
     'FaceAlpha', 1);
 hold on;
-surf(X2, Z2, Y2, ...
+surf(Z2, X2, Y2, ...
     'CData', (dens_wrapped2+eps), ...
     'FaceColor', 'interp', ...
     'EdgeColor', 'none', ...
@@ -240,8 +259,8 @@ surf(X2, Z2, Y2, ...
 colormap(gca, parula);
 colorbar;
 view(0, 90);
-xlabel('$x$', 'Interpreter', 'latex', 'FontSize', FS);
-ylabel('$z$', 'Interpreter', 'latex', 'FontSize', FS);
+xlabel('$z$', 'Interpreter', 'latex', 'FontSize', FS);
+ylabel('$x$', 'Interpreter', 'latex', 'FontSize', FS);
 set(gca, 'FontSize', FS);
 axis equal;
 
@@ -252,6 +271,6 @@ if savefig
     disp('sucessfully saved figures');
 end
 
-alignfigs;
+quadest.util.Plotting.alignfigs;
 
 fprintf('\n=== DONE ===\n');

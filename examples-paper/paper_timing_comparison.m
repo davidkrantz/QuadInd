@@ -64,10 +64,9 @@ peakRaw = (1 - sourceRadius^2) ./ ...
     (1 - 2*sourceRadius*peakDot + sourceRadius^2).^(3/2);
 peak = peakScale * ...
     (peakRaw - min(peakRaw(:))) / (max(peakRaw(:)) - min(peakRaw(:)));
-sigma1 = 1.0 + 14.0*peak .* (0.75 + 0.25*xhat) + 0.25*zhat;
-sigma2 = 1.1 + 10.0*peak .* (0.80 + 0.20*zhat) + 0.15*xhat.*zhat;
-sigma3 = 0.9 + 12.0*peak .* (0.70 + 0.30*peakDot) ...
-    + 0.20*(2*zhat.^2 - 1);
+sigma1 = 1.0 + 14.0*peak .* xhat;
+sigma2 = 1.1 + 10.0*peak .* zhat;
+sigma3 = 0.9 + 12.0*peak .* yhat;
 density = [sigma1(:), sigma2(:), sigma3(:)];
 
 % Create large pool of exterior target points
@@ -154,7 +153,7 @@ est_tab = estimator.evaluate(contour_points(mask_ext_contour, :), density);
 est_dir = estimator.evaluateDirect(contour_points(mask_ext_contour, :), density);
 u_dir = kernel.evaluateOnGrid(contour_points(mask_ext_contour, :), grid_surf, density);
 u_ref = kernel.evaluateUpsampled(contour_points(mask_ext_contour, :), grid_surf, density, ref_upsamp);
-u_err = sqrt(sum((u_dir - u_ref).^2, 2));
+u_err = vecnorm(u_dir - u_ref, 2, 2);
 
 %% Plot: log-log timing comparison
 close all;
@@ -223,6 +222,6 @@ if savefig
     disp('saving figures...');
     exportgraphics(figure(2),'../figs/capsule_timing_comparison.pdf','Resolution',400);
     exportgraphics(figure(3),'../figs/capsule_contour_tabulated.pdf','Resolution',1000);
-    exportgraphics(figure(4),'../figs/capsule_contour_direct.pdf','Resolution',1000);
+    %exportgraphics(figure(4),'../figs/capsule_contour_direct.pdf','Resolution',1000);
     disp('sucessfully saved figures');
 end
