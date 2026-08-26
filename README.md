@@ -2,18 +2,14 @@
 
 A MATLAB package for computing error estimates for layer potentials on axisymmetric 3D geometries.
 
-**Authors**: Pritpal 'Pip' Matharu, David Krantz (MPI MiS / KTH)
+**Authors**: David Krantz (KTH), Pritpal 'Pip' Matharu (MPI MiS)
 
-## Installation
+The figure below illustrates QuadEst for the Stokes stresslet on a capsule. The
+predicted error contours (black lines) closely follow the measured quadrature
+error (colors), while their evaluation remains inexpensive and scales linearly
+with the number of targets.
 
-```matlab
-% Option A: From the QuadEst directory in MATLAB
-addpath('.')          % or: addpath(pwd)
-init                  % also adds legacy/ to path
-
-% Option B: From any location
-addpath('/path/to/QuadEst');
-```
+![Capsule example](images/capsule_example.png)
 
 ## Quick Start
 
@@ -56,14 +52,14 @@ estimates = estimator.evaluate(targets, density);
 │   ├── AxsymGrid.m     # GL×Trapezoidal grid
 │   └── Upsampler.m     # Trig + barycentric Lagrange interpolation
 ├── +errorest/          # Error estimation (core module)
-│   ├── ErrorEstimator.m      # Main API
+│   ├── ErrorEstimator.m
 │   ├── UniformEstimateBuilder.m
 │   ├── RootFinder.m
 │   └── DensityModifier.m
 ├── +util/              # Utilities
 │   ├── Config.m        # Default parameters
 │   ├── Diagnostics.m   # Warnings, logging
-│   ├── GaussLegendre.m # GL nodes/weights
+│   ├── GaussLegendre.m
 │   ├── GaussLaguerre8.m
 │   └── Plotting.m      # Static visualization utilities
 └── +test/              # Unit tests
@@ -72,7 +68,7 @@ estimates = estimator.evaluate(targets, density);
                         #   ErrorEstimation, LegacyComparison)
 
 examples/               # Demo scripts
-legacy/                 # Original research code (for regression testing)
+legacy/                 # Original research code ()
 init.m                  # Path initialization
 ```
 
@@ -90,28 +86,6 @@ run('examples/demo_nearfield.m');
 % Numerical validation against measured quadrature errors
 run('examples/demo_validation.m');
 ```
-
-## Running Tests
-
-```matlab
-% Run all unit tests
-results = quadest.test.runAllTests();
-disp(results.summary);
-
-% With verbose output or stop on first failure
-results = quadest.test.runAllTests('verbose', true, 'stopOnFailure', true);
-
-% Run a single test class
-results = quadest.test.TestGeometry().run();
-
-% Include legacy regression tests (requires legacy/ on path)
-addpath(genpath('legacy'));
-results = quadest.test.TestLegacyComparison().run();
-```
-
-## Requirements
-
-- Statistics and Machine Learning Toolbox (`knnsearch`) — used only in `TestLegacyComparison.m`; the core error estimation and density interpolation paths use a parametric nearest-node approach and do **not** require this toolbox
 
 ## Adding New Geometries
 
@@ -142,10 +116,9 @@ end
 
 ## Adding New Kernels
 
-The grid-level `Kernel` interface is extensible, but `ErrorEstimator` currently
+The `Kernel` interface is extensible, but `ErrorEstimator` currently
 supports only `StokesStresslet`: its precomputed numerator and three-component
-collapse are stresslet-specific. A new estimatable kernel also requires a
-kernel-specific error-numerator interface in `UniformEstimateBuilder`.
+collapse are stresslet-specific.
 
 Subclass `quadest.kernel.Kernel` and implement:
 
@@ -165,9 +138,33 @@ classdef MyKernel < quadest.kernel.Kernel
 end
 ```
 
+
+## Running Tests
+
+```matlab
+% Run all unit tests
+results = quadest.test.runAllTests();
+disp(results.summary);
+
+% With verbose output or stop on first failure
+results = quadest.test.runAllTests('verbose', true, 'stopOnFailure', true);
+
+% Run a single test class
+results = quadest.test.TestGeometry().run();
+
+% Include legacy regression tests (requires legacy/ on path)
+% Requires the Statistics and Machine Learning Toolbox (`knnsearch`)
+addpath(genpath('legacy'));
+results = quadest.test.TestLegacyComparison().run();
+```
+
 ## References
-If you find **QuadEst** useful in your work, we ask that you please cite the following works:
-* This software. TODO.
+If you find this code useful in your research, please cite the following works:
+
 * Our paper. TODO.
 * L. af Klinteberg, C. Sorgentone, and A.-K. Tornberg, *Quadrature error estimates for layer potentials evaluated near curved surfaces in three dimensions*, Computers & Mathematics with Applications, 111 (2022), pp. 1–19, https://doi.org/10.1016/j.camwa.2022.02.001.
 * Sorgentone and A.-K. Tornberg, *Estimation of quadrature errors for layer potentials evaluated near surfaces with spherical topology*, Advances in Computational Mathematics, 49 (2023), p. 87, https://doi.org/10.1007/s10444-023-10083-7.
+
+The software itself is also archived on Zenodo and can be cited as:
+
+* TODO
