@@ -145,7 +145,7 @@ C_TZ         = bodyvals.nph*norm(grad_perp_TZ)/norm(grad_TZ);
 % Gauss-Legendre quadrature
 grad_perp_GL = axsym_drdphi(theta_star,s_star,a);
 grad_GL      = axsym_drdtheta(theta_star,s_star,dadt,dcdt);
-C_GL         = max(bodyvals.nth*norm(grad_perp_GL)/norm(grad_GL),bodyvals.nth);
+C_GL         = 2*(bodyvals.nth*norm(grad_perp_GL)/norm(grad_GL));
 
 
 %% Phi direction (Trapezoidal rule)
@@ -173,8 +173,8 @@ for ii = 1:2
     % Numerical integration quantities
     est_const = abs( 2/gamma(p)*fp0t*Gp0t^(-p) );
     ds        = xlag/C_TZ;
-    dtpos = phi0tstar + dp0fun(ds)  - dp0fun(0);
-    dtneg = phi0tstar + dp0fun(-ds) - dp0fun(0);
+    dtpos = phi0tstar - dp0fun(ds)  + dp0fun(0);
+    dtneg = phi0tstar - dp0fun(-ds) + dp0fun(0);
     estintegrand_pos = trapz_errfunc_deriv(dtpos, bodyvals.nph, p-1);
     estintegrand_neg = trapz_errfunc_deriv(dtneg, bodyvals.nph, p-1);
     % Collect quantities to determine error
@@ -318,7 +318,7 @@ lambda_PR = (1./(2*a(theta_star))).*((a(theta_star).^2 + xeval(:, 1).^2 +xeval(:
 % *Plus or minus imaginary part, so for simplicity we choose positive WLOG
 phi0tstar = mod(atan2(xeval(:, 2), xeval(:, 1)),2*pi)  + 1i*log(lambda_PR - sqrt(lambda_PR.^2 - 1));
 % Geometric factor
-Gp0t=2*dot(gamma_tilde_S(phi0tstar)-xeval,dgamma_tilde_S(phi0tstar));
+Gp0t=2*sum((gamma_tilde_S(phi0tstar)-xeval).*dgamma_tilde_S(phi0tstar));
 
 
 %% Approx. theta0star (root in theta direction)
@@ -340,7 +340,7 @@ else
   theta0_phistar = imap(t0_phistar);
 end
 % Geometric factor
-Gt0p=2*dot(gamma_tilde_T(t0_phistar)-xeval,dgamma_tilde_T(t0_phistar));
+Gt0p=2*sum((gamma_tilde_T(t0_phistar)-xeval).*dgamma_tilde_T(t0_phistar));
 
 end
 
@@ -418,7 +418,7 @@ function r = all_differences(x, y)
 % - r: N×M×3 array containing all possible differences x - y.
 r = zeros(size(y,1), size(x,1), 3); % N×M×3
 for d=1:3
-  xd = x(:,d)'; % 1×M
+  xd = x(:,d).'; % 1×M
   yd = y(:,d); % N×1
   rd = bsxfun(@minus, xd, yd); % N×M
   r(:,:,d) = rd;

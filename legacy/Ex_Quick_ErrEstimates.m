@@ -176,9 +176,30 @@ if errest.flag % Interpolate root in theta
 else % Use analytic root expressions if available, otherwise Newton solver
   [qp, qt, phi0_thstar, intpind_p] = Qintp(body, xt, body.a, body.c, reshape(density, body.nth, body.nph, 3), tmpR);
 end
+% % No rotation
+% Mqpqt = max(qp, qt); % Take max of density in both directions and modify uniform estimate
+% Errest = max(estval.*Mqpqt, [], 2);
+
+% Rotate densities since target point not in phi=0 plane
+alpha = atan2(xt(:,2), xt(:,1));
+cosalpha = cos(alpha);
+sinalpha = sin(alpha);
+zsign = ones(size(xt, 1), 1);
+zsign(xt(:,3) < 0) = -1;
+
+% Rotated densities
+qphiRot = [ ...
+  cosalpha .* qp(:,1) + sinalpha .* qp(:,2), ...
+  -sinalpha .* qp(:,1) + cosalpha .* qp(:,2), ...
+  zsign .* qp(:,3)];
+qthetaRot = [ ...
+  cosalpha .* qt(:,1) + sinalpha .* qt(:,2), ...
+  -sinalpha .* qt(:,1) + cosalpha .* qt(:,2), ...
+  zsign .* qt(:,3)];
+
 % Take max of density in both directions and modify uniform estimate
-Mqpqt = max(qp, qt);
-Errest = max(estval.*Mqpqt, [], 2);
+Mqpqt = max(abs(qphiRot), abs(qthetaRot));
+Errest = sum(estval.*Mqpqt, 2);
 
 % For plotting
 pltout.Errest_uni    = estval;
@@ -198,7 +219,7 @@ for k=2:numel(errest.upsampfac)
   esttmp    = cellfun(@(c) 10.^(c(xycoord, abs(zcoord))), {errest.errest_INT{upsamp, :}}, 'UniformOutput',false);
   estval    = reshape(cell2mat(esttmp), size(xycoord, 1), 3);
   % Modify error estimate
-  errest_up = max(estval.*Mqpqt, [], 2);
+  errest_up = sum(estval.*Mqpqt, 2);
 
   % For plotting
   pltout.estup_stor{k} = errest_up;
