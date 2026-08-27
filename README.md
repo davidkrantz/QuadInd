@@ -1,169 +1,91 @@
-# QuadEst: Quadrature Error Estimation for Axisymmetric Geometries
+# QuadInd: Fast quadrature error indicators for axisymmetric geometries
 
-A MATLAB package for computing error estimates for layer potentials on axisymmetric 3D geometries.
+**QuadInd** is a MATLAB package for rapidly evaluating quadrature error indicators for layer potentials on axisymmetric surfaces. The indicators help determine whether a target can be handled by direct quadrature or uniform upsampling, or instead requires a special quadrature method.
 
-**Authors**: David Krantz (KTH), Pritpal 'Pip' Matharu (MPI MiS)
+The figure below shows QuadInd applied to the Stokes double layer potential on a capsule-shaped particle. The predicted error contours (black) closely follow the measured quadrature error (colors), while the indicators remain inexpensive to evaluate and scale linearly with the number of targets.
 
-The figure below illustrates QuadEst for the Stokes stresslet on a capsule. The
-predicted error contours (black lines) closely follow the measured quadrature
-error (colors), while their evaluation remains inexpensive and scales linearly
-with the number of targets.
+![Measured quadrature error and QuadInd contours for a capsule](images/capsule_example.png)
 
-![Capsule example](images/capsule_example.png)
+## Scope and limitations
 
-## Quick Start
+QuadInd currently constructs indicators only for `quadind.kernel.StokesStresslet`.
+
+The indicator construction assumes that:
+
+- The source surface is closed and axisymmetric, and the target points lie in its exterior.
+- The surface is discretized using a tensor-product quadrature rule with Gauss–Legendre nodes in the meridional direction and equispaced trapezoidal nodes in the periodic azimuthal direction. The density must be sampled on this grid.
+- The geometry is symmetric about `z = 0`. QuadInd tabulates only the `z >= 0` meridional half-plane and maps targets using `abs(z)`; asymmetric geometries are rejected during evaluator construction.
+- The base quadrature grid sufficiently resolves both the surface geometry and the density. New shapes, aspect ratios, highly oscillatory densities, and tolerance ranges should be validated before use.
+
+## Quick start
 
 ```matlab
-% 1. Define geometry
-geom = quadest.geometry.Spheroid('a', 0.05, 'c', 0.1);
+% 1. Define an axisymmetric geometry
+geometry = quadind.geometry.Spheroid('a', 0.05, 'c', 0.1);
 
-% 2. Select kernel
-kernel = quadest.kernel.StokesStresslet();
+% 2. Select the kernel
+kernel = quadind.kernel.StokesStresslet();
 
-% 3. Precompute error estimates
-estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
-    'nth', 40, 'nph', 60, 'upsampFactors', 1:6);
+% 3. Precompute the indicator tables
+evaluator = quadind.IndicatorEvaluator(geometry, kernel, ...
+    'nth', 40, 'nph', 60, 'upsampFactors', 1:2);
 
-% 4. Define density and targets
-density = ones(40*60, 3);  % [N×3] on grid
-targets = [0.1, 0, 0];     % [M×3] evaluation points
+% 4. Define a density and target points
+grid = evaluator.getGrid();
+density = ones(grid.numPoints(), kernel.numComponents());
+targets = [0.10, 0, 0; 0.052, 0, 0];
 
-% 5. Evaluate
-estimates = estimator.evaluate(targets, density);
-
-% With classification for tolerance-based method selection:
-[estimates, classification] = estimator.evaluate(targets, density, 'tol', 1e-6);
+% 5. Evaluate base-grid indicators and classify the targets
+[indicators, classification] = evaluator.evaluate( ...
+    targets, density, 'tol', 1e-6);
 ```
 
-## Package Structure
+For each target, the classification contains:
 
-```
-+quadest/
-├── +geometry/          # Axisymmetric geometry definitions
-│   ├── AxsymGeometry.m # Abstract base class
-│   ├── Spheroid.m      # Prolate/oblate spheroid
-│   ├── Capsule.m       # Capsule shape
-│   ├── Peanut.m        # Peanut shape
-│   └── CustomAxsym.m   # User-defined parameterization (function handles)
-├── +kernel/            # Layer potential kernels
-│   ├── Kernel.m        # Abstract kernel interface
-│   └── StokesStresslet.m  # Stokes stresslet (p = 5/2)
-├── +grid/              # Quadrature discretization
-│   ├── AxsymGrid.m     # GL×Trapezoidal grid
-│   └── Upsampler.m     # Trig + barycentric Lagrange interpolation
-├── +errorest/          # Error estimation (core module)
-│   ├── ErrorEstimator.m
-│   ├── UniformEstimateBuilder.m
-│   ├── RootFinder.m
-│   └── DensityModifier.m
-├── +util/              # Utilities
-│   ├── Config.m        # Default parameters
-│   ├── Diagnostics.m   # Warnings, logging
-│   ├── GaussLegendre.m
-│   ├── GaussLaguerre8.m
-│   └── Plotting.m      # Static visualization utilities
-└── +test/              # Unit tests
-    ├── runAllTests.m   # Test runner
-    └── Test*.m         # Test classes (Util, Geometry, Grid, Kernel,
-                        #   ErrorEstimation, LegacyComparison)
-
-examples/               # Demo scripts
-legacy/                 # Original research code ()
-init.m                  # Path initialization
-```
+- `upsamplingFactor`: the smallest tabulated factor whose indicator falls below the requested tolerance;
+- `requiresSpecialQuadrature`: true if none of the tabulated factors is sufficient;
+- `indicators`: indicator values for every tabulated factor;
+- `masks`: logical masks identifying the targets first accepted at each factor;
+- `tol`: the requested tolerance.
 
 ## Examples
 
-Run the example scripts in `examples/`:
+Run the examples from the repository root:
 
 ```matlab
-% Minimal example
 run('examples/demo_minimal.m');
-
-% Near-field example
 run('examples/demo_nearfield.m');
-
-% Numerical validation against measured quadrature errors
 run('examples/demo_validation.m');
 ```
 
-## Adding New Geometries
+Scripts in `examples-paper/` generate the figures used in the associated paper.
 
-Subclass `quadest.geometry.AxsymGeometry` and implement:
-
-```matlab
-classdef MyGeometry < quadest.geometry.AxsymGeometry
-    methods
-        function val = at(obj, theta)
-            % Radial distance in xy-plane
-        end
-        function val = ct(obj, theta)
-            % Z-coordinate
-        end
-        function val = dadt(obj, theta)
-            % d(at)/d(theta)
-        end
-        function val = dcdt(obj, theta)
-            % d(ct)/d(theta)
-        end
-        function val = maxRadius(obj), end
-        function val = maxHeight(obj), end
-        function mask = isExterior(obj, points), end
-        function theta = findThetaRoot(obj, targets, phi), end
-    end
-end
-```
-
-## Adding New Kernels
-
-The `Kernel` interface is extensible, but `ErrorEstimator` currently
-supports only `StokesStresslet`: its precomputed numerator and three-component
-collapse are stresslet-specific.
-
-Subclass `quadest.kernel.Kernel` and implement:
-
-```matlab
-classdef MyKernel < quadest.kernel.Kernel
-    methods
-        function u = evaluate(obj, targets, sources, normals, density, weights)
-            % Compute kernel
-        end
-        function p = singularityOrder(obj)
-            % Return singularity order (e.g., 5/2 for stresslet)
-        end
-        function n = numComponents(obj)
-            % Return number of output components
-        end
-    end
-end
-```
-
-
-## Running Tests
+## Tests
 
 ```matlab
 % Run all unit tests
-results = quadest.test.runAllTests();
-disp(results.summary);
+results = run_tests();
 
-% With verbose output or stop on first failure
-results = quadest.test.runAllTests('verbose', true, 'stopOnFailure', true);
-
-% Run a single test class
-results = quadest.test.TestGeometry().run();
-
-% Include legacy regression tests (requires legacy/ on path)
-% Requires the Statistics and Machine Learning Toolbox (`knnsearch`)
-addpath(genpath('legacy'));
-results = quadest.test.TestLegacyComparison().run();
+% Run one test class
+addpath('tests');
+suite = matlab.unittest.TestSuite.fromClass(?TestIndicatorEvaluation);
+results = run(suite);
 ```
 
+## Authors
+
+- **David Krantz** (KTH Royal Institute of Technology)
+- **Pritpal “Pip” Matharu** (Max Planck Institute for Mathematics in the Sciences)
+
+The legacy implementation is archived for reference; see [legacy/README.md](legacy/README.md).
+
 ## References
+
 If you find this code useful in your research, please cite the following works:
 
 * Our paper. TODO.
 * L. af Klinteberg, C. Sorgentone, and A.-K. Tornberg, *Quadrature error estimates for layer potentials evaluated near curved surfaces in three dimensions*, Computers & Mathematics with Applications, 111 (2022), pp. 1–19, https://doi.org/10.1016/j.camwa.2022.02.001.
-* Sorgentone and A.-K. Tornberg, *Estimation of quadrature errors for layer potentials evaluated near surfaces with spherical topology*, Advances in Computational Mathematics, 49 (2023), p. 87, https://doi.org/10.1007/s10444-023-10083-7.
+* C. Sorgentone and A.-K. Tornberg, *Estimation of quadrature errors for layer potentials evaluated near surfaces with spherical topology*, Advances in Computational Mathematics, 49 (2023), article 87, https://doi.org/10.1007/s10444-023-10083-7.
 
 The software itself is also archived on Zenodo and can be cited as:
 

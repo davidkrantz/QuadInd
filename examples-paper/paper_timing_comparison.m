@@ -28,24 +28,24 @@ savefig = 0;
 %% Geometry & kernel
 fprintf('=== TIMING COMPARISON: TABULATED vs DIRECT ===\n\n');
 
-geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
-kernel = quadest.kernel.StokesStresslet();
+geom = quadind.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
+kernel = quadind.kernel.StokesStresslet();
 
 fprintf('Geometry: Capsule (R = 1, L = 6, kappa = 3)\n');
 fprintf('Kernel:   %s (p = %.1f)\n', kernel.kernelName(), kernel.singularityOrder());
 fprintf('Grid:     %d x %d = %d nodes\n\n', nth, nph, nth*nph);
 
-%% Precompute error estimates (timed)
-fprintf('Precomputing error estimates...\n');
+%% Precompute error indicators (timed)
+fprintf('Precomputing error indicators...\n');
 tic;
-estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
+evaluator = quadind.IndicatorEvaluator(geom, kernel, ...
     'nth', nth, 'nph', nph, ...
     'upsampFactors', upsamp_fac, ...
     'interpolateRoots', true);
 t_precomp = toc;
 fprintf('  Precomputation time: %.2f s\n', t_precomp);
 
-grid_surf = estimator.getGrid();
+grid_surf = evaluator.getGrid();
 Nb = grid_surf.numPoints();
 
 % Define near-singular density (smooth Poisson-kernel-like near-source)
@@ -110,7 +110,7 @@ for i = 1:length(allCounts)
     times_tab = zeros(nRepeats, 1);
     for r = 1:nRepeats
         tic;
-        est_tab = estimator.evaluate(sub_targets, density);
+        est_tab = evaluator.evaluate(sub_targets, density);
         times_tab(r) = toc;
     end
     t_tabulated(i) = median(times_tab);
@@ -119,7 +119,7 @@ for i = 1:length(allCounts)
     times_dir = zeros(nRepeats, 1);
     for r = 1:nRepeats
         tic;
-        est_dir = estimator.evaluateDirect(sub_targets, density);
+        est_dir = evaluator.evaluateDirect(sub_targets, density);
         times_dir(r) = toc;
     end
     t_direct(i) = median(times_dir);
@@ -147,10 +147,10 @@ if any(mask_valid_both)
 end
 fprintf('\n');
 
-%% Compute error at all targets for final tabulated and direct estimates (for plotting)
-fprintf('Computing errors for final tabulated and direct estimates...\n');
-est_tab = estimator.evaluate(contour_points(mask_ext_contour, :), density);
-est_dir = estimator.evaluateDirect(contour_points(mask_ext_contour, :), density);
+%% Compute error at all targets for final tabulated and direct indicators (for plotting)
+fprintf('Computing errors for final tabulated and direct indicators...\n');
+est_tab = evaluator.evaluate(contour_points(mask_ext_contour, :), density);
+est_dir = evaluator.evaluateDirect(contour_points(mask_ext_contour, :), density);
 u_dir = kernel.evaluateOnGrid(contour_points(mask_ext_contour, :), grid_surf, density);
 u_ref = kernel.evaluateUpsampled(contour_points(mask_ext_contour, :), grid_surf, density, ref_upsamp);
 u_err = vecnorm(u_dir - u_ref, 2, 2);
@@ -165,54 +165,27 @@ figure('DefaultAxesFontSize',FS);
 loglog(allCounts, t_tabulated, 'o-', 'Color', [0.0, 0.45, 0.74], ...
     'MarkerFaceColor', [0.0, 0.45, 0.74], 'LineWidth', 1.5, 'MarkerSize', 7);
 hold on;
-%loglog(allCounts, allCounts.'./t_tabulated, 'o-', 'Color', [1.0, 0.45, 0.74], ...
-%    'MarkerFaceColor', [1.0, 0.45, 0.74], 'LineWidth', 1.5, 'MarkerSize', 7);
-
-% Direct (red squares + line)
-%mask_dir = ~isnan(t_direct);
-%loglog(allCounts(mask_dir), t_direct(mask_dir), 's-', 'Color', [0.85, 0.33, 0.1], ...
-%    'MarkerFaceColor', [0.85, 0.33, 0.1], 'LineWidth', 1.5, 'MarkerSize', 7);
 
 % Precomputation time (horizontal dashed black line)
 xlims = [min(allCounts), max(allCounts)];
 %plot(xlims, [t_precomp, t_precomp], 'k--', 'LineWidth', 1.5);
 
 % Reference slope (dotted black line)
-%loglog(allCounts,1e-4*allCounts,'k:','LineWidth',1.5);
 loglog(allCounts,1e-6*allCounts,'k:','LineWidth',1.5);
 
 xlim(xlims);
 xticks([1e1 1e2 1e3 1e4 1e5]);
-%yticks([1e-4 1e-3 1e-2 1e-1 1e0 1e1 1e2 1e3 1e4]);
 xlabel('Number of targets, $N$', 'FontSize', FS,'Interpreter', 'latex');
 ylabel('Time (s)', 'FontSize', FS,'Interpreter', 'latex');
-% legend({'Tabulated', 'Direct', 'Precomputation'}, ...
-%     'Interpreter', 'latex', 'Location', 'northwest', 'FontSize', 14);
-%legend('Tabulated', 'Interpreter', 'latex', 'Location', 'northwest', 'FontSize', 14);
 grid on;
 annotation('textarrow',[0.44 0.5],[0.6 0.53],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
-%annotation('textarrow',[0.744 0.65],[0.55 0.615],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
-
-% Vertical speedup arrow at last valid data point
-speedup_factor = t_direct(end) / t_tabulated(end);
-x_arrow = allCounts(end);
-y_tab = t_tabulated(end);
-y_dir = t_direct(end);
-% Convert to normalized figure coordinates for annotation arrow
-%ax = gca;
-%x_norm = log10(x_arrow / xlims(1)) / (log10(xlims(2) / xlims(1)));
-%y_tab_norm = (log10(y_tab) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
-%y_dir_norm = (log10(y_dir) - log10(1e-4)) / (log10(1e4) - log10(1e-4));
-%annotation('doublearrow',[x_norm, x_norm]-0.108, [y_dir_norm, y_tab_norm]+0.161);
-%text(48000,0.7,[num2str(round(speedup_factor)) '$\times$'], 'FontSize', FS, 'Interpreter', 'latex', ...
-%    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
 set(gca, 'FontSize', FS);
 
-% Plot contour of error for tabulated and direct estimates
+% Plot contour of error for tabulated and direct indicators
 figure('DefaultAxesFontSize',FS);
-quadest.util.Plotting.plotErrorContour(xv, zv, u_err, est_tab, mask_ext_contour, geom, 'showLabels', false);
+quadind.util.Plotting.plotErrorContour(xv, zv, u_err, est_tab, mask_ext_contour, geom, 'showLabels', false);
 figure('DefaultAxesFontSize',FS);
-quadest.util.Plotting.plotErrorContour(xv, zv, u_err, est_dir, mask_ext_contour, geom , 'showLabels', false);
+quadind.util.Plotting.plotErrorContour(xv, zv, u_err, est_dir, mask_ext_contour, geom , 'showLabels', false);
 
 close(1);
 alignfigs;
@@ -222,6 +195,5 @@ if savefig
     disp('saving figures...');
     exportgraphics(figure(2),'../figs/capsule_timing_comparison.pdf','Resolution',400);
     exportgraphics(figure(3),'../figs/capsule_contour_tabulated.pdf','Resolution',1000);
-    %exportgraphics(figure(4),'../figs/capsule_contour_direct.pdf','Resolution',1000);
     disp('sucessfully saved figures');
 end

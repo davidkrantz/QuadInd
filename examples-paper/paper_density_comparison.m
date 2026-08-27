@@ -1,4 +1,4 @@
-% paper_density_comparison.m - Compare error estimates with and without density
+% paper_density_comparison.m - Compare error indicators with and without density
 
 %% Setup path
 clear; close all;
@@ -49,20 +49,20 @@ density2 = [Q(3*N+1:4*N), Q(4*N+1:5*N), Q(5*N+1:6*N)];
 fprintf('  density1: size = [%d, %d], norm = %.4e\n', size(density1, 1), size(density1, 2), norm(density1(:)));
 fprintf('  density2: size = [%d, %d], norm = %.4e\n', size(density2, 1), size(density2, 2), norm(density2(:)));
 
-%% Step 2: Setup geometry, kernel, estimator
-fprintf('\nStep 2: Setup geometry and precompute estimator\n');
+%% Step 2: Setup geometry, kernel, evaluator
+fprintf('\nStep 2: Setup geometry and precompute evaluator\n');
 
-geom = quadest.geometry.Spheroid('a', a, 'c', c);
-kernel = quadest.kernel.StokesStresslet();
+geom = quadind.geometry.Spheroid('a', a, 'c', c);
+kernel = quadind.kernel.StokesStresslet();
 
 tic;
-estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
+evaluator = quadind.IndicatorEvaluator(geom, kernel, ...
     'nth', nth, 'nph', nph, ...
     'upsampFactors', 1, ...
     'interpolateRoots', true);
 fprintf('  Precomputation time: %.2f s\n', toc);
 
-grid = estimator.getGrid();
+grid = evaluator.getGrid();
 assert(grid.numPoints() == N, 'Grid size mismatch: expected %d, got %d', N, grid.numPoints());
 
 %% Step 3: Build target grid
@@ -111,19 +111,19 @@ total_error = vecnorm( ...
 fprintf('  Body 1 error: max = %.2e, median = %.2e\n', max(err1), median(err1));
 fprintf('  Body 2 error: max = %.2e, median = %.2e\n', max(err2), median(err2));
 
-%% Step 5: Compute error estimates
-fprintf('\nStep 5: Compute error estimates\n');
+%% Step 5: Compute error indicators
+fprintf('\nStep 5: Compute error indicators\n');
 
 tic;
 % With density
-est1_wd = estimator.evaluate(targets_ext, density1);
-est2_wd = estimator.evaluate(targets_ext_shifted, density2);
+est1_wd = evaluator.evaluate(targets_ext, density1);
+est2_wd = evaluator.evaluate(targets_ext_shifted, density2);
 est_with_density = max(est1_wd, est2_wd);
 
-% Without density (unit density -> uniform estimate)
+% Without density (unit density -> uniform indicator)
 unit_density = ones(N, 3);
-est1_nd = estimator.evaluate(targets_ext, unit_density);
-est2_nd = estimator.evaluate(targets_ext_shifted, unit_density);
+est1_nd = evaluator.evaluate(targets_ext, unit_density);
+est2_nd = evaluator.evaluate(targets_ext_shifted, unit_density);
 % Global max-norm density factor per particle:
 % max over all grid nodes of the vector infinity norm of the density.
 global_factor1 = max(vecnorm(density1, inf, 2));
@@ -145,7 +145,7 @@ panelData = {est_with_density, est_without_density};
 for ip = 1:2
     figure('DefaultAxesFontSize',FS, 'Position', [100, 100, 1100, 550]);
 
-    estimates = panelData{ip};
+    indicators = panelData{ip};
 
     % Reshape to grid (log10 scale)
     err_full = NaN(numel(mask_ext), 1);
@@ -153,7 +153,7 @@ for ip = 1:2
     Err = reshape(err_full, Ngrid, Ngrid);
 
     est_full = NaN(numel(mask_ext), 1);
-    est_full(mask_ext) = log10(abs(estimates) + eps);
+    est_full(mask_ext) = log10(abs(indicators) + eps);
     Est = reshape(est_full, Ngrid, Ngrid);
 
     % Clamp and clean
@@ -189,7 +189,7 @@ for ip = 1:2
     xlabel(cbar, '$\log_{10}(\textrm{Error})$', 'FontSize', FS, 'Interpreter', 'latex');
 
     % Colormap
-    colormap(gca, quadest.util.Plotting.divergingColormap(length(levels) - 1));
+    colormap(gca, quadind.util.Plotting.divergingColormap(length(levels) - 1));
     
     % Plot first spheroid (horizontal/vertical swapped to match rotated view)
     Xg = reshape(grid.x(:,1), nth, nph);
@@ -271,6 +271,6 @@ if savefig
     disp('sucessfully saved figures');
 end
 
-quadest.util.Plotting.alignfigs;
+quadind.util.Plotting.alignfigs;
 
 fprintf('\n=== DONE ===\n');

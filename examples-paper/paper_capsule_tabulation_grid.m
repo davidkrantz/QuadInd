@@ -15,11 +15,10 @@ FS = 16;
 nth = 50;
 nph = 40;
 
-geom = quadest.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
+geom = quadind.geometry.Capsule('R', 1, 'L', 6, 'kappa', 3);
 
 % Reconstruct the tabulation grid coordinates 
-% (matches UniformEstimateBuilder.buildTabGrid)
-cfg = quadest.util.Config();
+cfg = quadind.util.Config();
 maxExtent = 2 * (geom.maxRadius() + geom.maxHeight());
 
 % First quarter plane only: rxy >= 0, z >= 0
@@ -37,7 +36,7 @@ figure('DefaultAxesFontSize',FS);
 plot3(zeros(size(RXY(extMask))), RXY(extMask), ZABS(extMask), '.', ...
     'Color', 'b', 'MarkerSize', 6);
 hold on;
-quadest.util.Plotting.plotSurfaceMesh(geom);
+quadind.util.Plotting.plotSurfaceMesh(geom);
 axis equal;
 ylim([rxy_tab(1), maxExtent/2]);
 zlim([z_tab(1), maxExtent/2]);

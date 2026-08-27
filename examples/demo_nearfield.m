@@ -1,9 +1,9 @@
-% demo_nearfield.m - Near-field error estimation behavior
+% demo_nearfield.m - Near-field error-indicator behavior
 %
-% This script demonstrates error estimation for targets at varying
+% This script demonstrates error-indicator evaluation for targets at varying
 % distances from the surface, focusing on the near-singular regime.
 %
-% Run from the QuadEst directory:
+% Run from the QuadInd directory:
 %   >> run('examples/demo_nearfield.m')
 
 %% Setup path
@@ -15,19 +15,19 @@ addpath(projectDir);
 fprintf('=== NEAR-FIELD DEMONSTRATION ===\n\n');
 
 % Geometry: spheroid
-geom = quadest.geometry.Spheroid('a', 0.05, 'c', 0.1);
-kernel = quadest.kernel.StokesStresslet();
+geom = quadind.geometry.Spheroid('a', 0.05, 'c', 0.1);
+kernel = quadind.kernel.StokesStresslet();
 
 fprintf('Geometry: ');
 disp(geom);
 
 % Precompute
-estimator = quadest.errorest.ErrorEstimator(geom, kernel, ...
+evaluator = quadind.IndicatorEvaluator(geom, kernel, ...
     'nth', 40, 'nph', 60, ...
     'upsampFactors', 1:6, ...
     'interpolateRoots', true);
 
-grid_est = estimator.getGrid();
+grid_est = evaluator.getGrid();
 density = ones(grid_est.numPoints(), 3);  % Stresslet identity
 
 %% Create targets at varying distances
@@ -39,52 +39,53 @@ targets = [(a + distances)', zeros(length(distances), 2)];
 fprintf('Testing %d targets at distances from %.4f to %.2f\n\n', ...
     length(distances), min(distances), max(distances));
 
-%% Evaluate estimates for each upsampling factor
+%% Evaluate indicators for each upsampling factor
 tol = 1e-6;
-[estimates, classification] = estimator.evaluate(targets, density, 'tol', tol);
+[indicators, classification] = evaluator.evaluate(targets, density, 'tol', tol);
 
 %% Plot results
 figure('Position', [100, 100, 1000, 400]);
 
-% Plot 1: Error estimate vs distance
+% Plot 1: Error indicator vs distance
 subplot(1, 2, 1);
-loglog(distances, estimates, 'b-', 'LineWidth', 2);
+loglog(distances, indicators, 'b-', 'LineWidth', 2);
 hold on;
 yline(tol, 'r--', 'LineWidth', 1.5, 'Label', sprintf('tol = %.0e', tol));
 xlabel('Distance from surface');
-ylabel('Error estimate');
-title('Error Estimate vs Distance');
+ylabel('Error indicator');
+title('Error Indicator vs Distance');
 grid on;
-legend('Estimate', 'Tolerance', 'Location', 'northeast');
+legend('Indicator', 'Tolerance', 'Location', 'northeast');
 
 % Plot 2: Recommended upsampling vs distance
 subplot(1, 2, 2);
-upsamp = classification.upsampfac;
-upsamp(classification.isSQ) = 7;  % Mark SQ as 7 for plotting
+upsamp = classification.upsamplingFactor;
+sqPlotValue = max(evaluator.upsampFactors) + 1;
+upsamp(classification.requiresSpecialQuadrature) = sqPlotValue;
 
 semilogx(distances, upsamp, 'ko-', 'LineWidth', 1.5, 'MarkerSize', 6);
 xlabel('Distance from surface');
 ylabel('Recommended upsampling factor');
 title(sprintf('Quadrature Method (tol = %.0e)', tol));
-yticks(1:7);
-yticklabels({'1 (direct)', '2', '3', '4', '5', '6', 'SQ'});
-ylim([0.5, 7.5]);
+yticks(1:sqPlotValue);
+yticklabels([compose('%d', evaluator.upsampFactors), "SQ"]);
+ylim([0.5, sqPlotValue + 0.5]);
 grid on;
 
-sgtitle('Near-Field Error Estimation');
+sgtitle('Near-Field Error Indicators');
 
 %% Print summary
 fprintf('Distance ranges by quadrature method:\n');
-for k = 1:6
+for k = evaluator.upsampFactors
     mask = (upsamp == k);
     if any(mask)
         fprintf('  Upsampling %d: distance %.4f to %.4f\n', ...
             k, min(distances(mask)), max(distances(mask)));
     end
 end
-if any(classification.isSQ)
+if any(classification.requiresSpecialQuadrature)
     fprintf('  Special Quad: distance %.4f to %.4f\n', ...
-        min(distances(classification.isSQ)), max(distances(classification.isSQ)));
+        min(distances(classification.requiresSpecialQuadrature)), max(distances(classification.requiresSpecialQuadrature)));
 end
 
 fprintf('\nDone!\n');
