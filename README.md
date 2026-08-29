@@ -1,8 +1,8 @@
-# QuadInd: Fast quadrature error indicators for axisymmetric geometries
+# QuadInd: Fast quadrature error indicators for layer potentials defined on axisymmetric geometries
 
-**QuadInd** is a MATLAB package for rapidly evaluating quadrature error indicators for layer potentials on axisymmetric surfaces. The indicators help determine whether a target can be handled by direct quadrature or uniform upsampling, or instead requires a special quadrature method.
+**QuadInd** is a software package written in MATLAB for rapidly evaluating quadrature error indicators for layer potentials on axisymmetric surfaces. The indicators help determine whether a target can be handled by direct quadrature or uniform upsampling, or instead requires a special quadrature method.
 
-The figure below shows QuadInd applied to the Stokes double layer potential on a capsule-shaped particle. The predicted error contours (black) closely follow the measured quadrature error (colors), while the indicators remain inexpensive to evaluate and scale linearly with the number of targets.
+The figure below shows QuadInd applied to the Stokes double layer potential on a capsule-shaped particle. The predicted error contours in black closely follow the measured quadrature error shown in color (left), while evaluating the indicators is inexpensive and scales linearly with the number of targets (right).
 
 ![Measured quadrature error and QuadInd contours for a capsule](images/capsule_example.png)
 
@@ -44,7 +44,8 @@ For each target, the classification contains:
 
 - `upsamplingFactor`: the smallest tabulated factor whose indicator falls below the requested tolerance;
 - `requiresSpecialQuadrature`: true if none of the tabulated factors is sufficient;
-- `indicators`: indicator values for every tabulated factor;
+- `indicators`: indicator values evaluated up to the first accepted factor
+  (`NaN` at later, unevaluated factors);
 - `masks`: logical masks identifying the targets first accepted at each factor;
 - `tol`: the requested tolerance.
 

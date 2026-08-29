@@ -121,7 +121,8 @@ classdef IndicatorEvaluator < handle
             %   upsamplingFactor         - Recommended factor for each target
             %   requiresSpecialQuadrature- True if no tabulated factor suffices
             %   masks                    - Newly accepted targets at each factor
-            %   indicators               - Indicator values at each factor
+            %   indicators               - Indicator values evaluated at each
+            %                              factor (NaN after acceptance)
             %   tol                      - The requested tolerance
             arguments
                 obj
@@ -159,7 +160,8 @@ classdef IndicatorEvaluator < handle
                 if isempty(tol)
                     classification = [];
                 else
-                    classification = obj.classifyTargets(modifier, tol, rquery, zquery);
+                    classification = obj.classifyTargets( ...
+                        modifier, indicators, tol, rquery, zquery);
                 end
             end
         end
@@ -235,7 +237,8 @@ classdef IndicatorEvaluator < handle
             values = obj.config.tabulationSafetyFactor * values;
         end
 
-        function classification = classifyTargets(obj, modifier, tol, rquery, zquery)
+        function classification = classifyTargets(obj, modifier, baseIndicators, ...
+                tol, rquery, zquery)
             % Assign each target to the first tabulated factor below tolerance.
             targetCount = numel(rquery);
             factorCount = numel(obj.upsampFactors);
@@ -244,16 +247,34 @@ classdef IndicatorEvaluator < handle
             classification.masks = cell(1, factorCount);
             classification.indicators = cell(1, factorCount);
             classification.tol = tol;
-            available = true(targetCount, 1);
+
             for factorIndex = 1:factorCount
+                classification.masks{factorIndex} = false(targetCount, 1);
+                classification.indicators{factorIndex} = nan(targetCount, 1);
+            end
+
+            classification.indicators{1} = baseIndicators;
+            classification.masks{1} = baseIndicators < tol;
+            classification.upsamplingFactor(classification.masks{1}) = ...
+                obj.upsampFactors(1);
+            available = ~classification.masks{1};
+
+            for factorIndex = 2:factorCount
+                if ~any(available)
+                    break;
+                end
+
+                targetIndices = find(available);
                 upsamplingFactor = obj.upsampFactors(factorIndex);
-                values = obj.interpolateIndicators(upsamplingFactor, rquery, zquery);
-                indicator = sum(values .* modifier, 2);
-                mask = available & indicator < tol;
-                classification.indicators{factorIndex} = indicator;
-                classification.masks{factorIndex} = mask;
-                classification.upsamplingFactor(mask) = obj.upsampFactors(factorIndex);
-                available(mask) = false;
+                values = obj.interpolateIndicators(upsamplingFactor, ...
+                    rquery(targetIndices), zquery(targetIndices));
+                indicator = sum(values .* modifier(targetIndices,:), 2);
+                classification.indicators{factorIndex}(targetIndices) = indicator;
+
+                acceptedIndices = targetIndices(indicator < tol);
+                classification.masks{factorIndex}(acceptedIndices) = true;
+                classification.upsamplingFactor(acceptedIndices) = upsamplingFactor;
+                available(acceptedIndices) = false;
             end
             classification.requiresSpecialQuadrature = available;
             classification.upsamplingFactor(available) = max(obj.upsampFactors) + 1;

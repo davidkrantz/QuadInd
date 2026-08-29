@@ -215,6 +215,24 @@ classdef TestIndicatorEvaluation < QuadIndTestCase
             obj.assertTrue(classification.requiresSpecialQuadrature(1) || ...
                 classification.upsamplingFactor(2) <= classification.upsamplingFactor(1));
         end
+
+        function test_evaluator_classification_stops_after_acceptance(obj)
+            evaluator = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1:3, ...
+                'config', quadind.util.Config('ntab', 8, 'nztab', 8));
+            density = ones(8*12, 3);
+
+            [indicators, classification] = evaluator.evaluate( ...
+                [0.5, 0, 0; 0, 0, 0.5], density, 'tol', realmax);
+
+            obj.assertEqual(classification.indicators{1}, indicators);
+            obj.assertTrue(all(classification.masks{1}));
+            obj.assertTrue(all(isnan(classification.indicators{2})));
+            obj.assertTrue(all(isnan(classification.indicators{3})));
+            obj.assertFalse(any(classification.masks{2}));
+            obj.assertFalse(any(classification.masks{3}));
+            obj.assertFalse(any(classification.requiresSpecialQuadrature));
+        end
         
         function test_evaluator_handles_axis(obj)
             %TEST_EVALUATOR_HANDLES_AXIS Target on z-axis
