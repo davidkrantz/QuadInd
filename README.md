@@ -15,6 +15,7 @@ The indicator construction assumes that:
 - The source surface is closed and axisymmetric, and the target points lie in its exterior.
 - The surface is discretized using a tensor-product quadrature rule with Gauss–Legendre nodes in the meridional direction and equispaced trapezoidal nodes in the periodic azimuthal direction. The density must be sampled on this grid.
 - The geometry is symmetric about `z = 0`. QuadInd tabulates only the `z >= 0` meridional half-plane and maps targets using `abs(z)`; asymmetric geometries are rejected during evaluator construction.
+- The tabulation extends to `2*(maxRadius + maxHeight)` in both `rho` and `abs(z)`. Targets beyond that rectangle are linearly extrapolated in `log10(indicator)`.
 - The base quadrature grid sufficiently resolves both the surface geometry and the density. New shapes, aspect ratios, highly oscillatory densities, and tolerance ranges should be validated before use.
 
 ## Quick start

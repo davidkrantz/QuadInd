@@ -1,7 +1,8 @@
 classdef UniformIndicatorBuilder
     % UNIFORMINDICATORBUILDER Precompute uniform indicators on a tabulation grid
     %
-    % Builds gridded interpolants for error indicators assuming unit density.
+    % Builds linearly interpolating and extrapolating gridded interpolants for
+    % error indicators assuming unit density.
     % The actual error indicator is obtained by multiplying by the density
     % magnitude at complex roots (see DensityModifier).
     %
@@ -107,7 +108,8 @@ classdef UniformIndicatorBuilder
                 for c = 1:ncomp
                     estMat = reshape(fullIndicators(:, c), config.ntab, config.nztab);
                     interpolants{upfac, c} = griddedInterpolant(...
-                        tabGrid.xy_grid, tabGrid.z_grid, log10(estMat), 'linear');
+                        tabGrid.xy_grid, tabGrid.z_grid, log10(estMat), ...
+                        'linear', 'linear');
                 end
                 
                 % Store theta root interpolants if requested
@@ -117,9 +119,11 @@ classdef UniformIndicatorBuilder
                     rootMat = reshape(fullRoots, config.ntab, config.nztab);
 
                     rootInterp.Re{upfac} = griddedInterpolant(...
-                        tabGrid.xy_grid, tabGrid.z_grid, real(rootMat), 'linear');
+                        tabGrid.xy_grid, tabGrid.z_grid, real(rootMat), ...
+                        'linear', 'linear');
                     rootInterp.Im{upfac} = griddedInterpolant(...
-                        tabGrid.xy_grid, tabGrid.z_grid, abs(imag(rootMat)), 'linear');
+                        tabGrid.xy_grid, tabGrid.z_grid, abs(imag(rootMat)), ...
+                        'linear', 'linear');
                 end
             end
             

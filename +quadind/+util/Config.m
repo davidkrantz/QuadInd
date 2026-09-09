@@ -19,7 +19,7 @@ classdef Config
         tol = 1e-6            % Default error tolerance for classification
         upsampFactors = 1:6   % Upsampling factors to precompute
         interpolateRoots = true  % Whether to interpolate theta roots
-        interpolatedRootResidualTolerance = NaN  % Root interpolation/fallback check
+        interpolatedRootResidualTolerance = NaN;  % Root check (NaN disables)
         tabulationSafetyFactor = 1  % Guard against log-interpolation underestimation
         
         % Tabulation grid for precomputation

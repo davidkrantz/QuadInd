@@ -137,6 +137,116 @@ classdef TestIndicatorEvaluation < QuadIndTestCase
                 1e-12*max(1, indicator2));
         end
 
+        function test_interpolants_use_linear_extrapolation(obj)
+            evaluator = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1:2, ...
+                'config', quadind.util.Config('ntab', 8, 'nztab', 8));
+
+            for factor = evaluator.upsampFactors
+                for component = 1:obj.kernel.numComponents()
+                    obj.assertEqual(evaluator.interpolants{factor,component}.Method, ...
+                        'linear');
+                    obj.assertEqual(evaluator.interpolants{factor,component}.ExtrapolationMethod, ...
+                        'linear');
+                end
+                obj.assertEqual(evaluator.rootInterpolants.Re{factor}.ExtrapolationMethod, ...
+                    'linear');
+                obj.assertEqual(evaluator.rootInterpolants.Im{factor}.ExtrapolationMethod, ...
+                    'linear');
+            end
+        end
+
+        function test_log_linear_extrapolation_across_all_boundaries(obj)
+            cfg = quadind.util.Config('ntab', 8, 'nztab', 8);
+            evaluator = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1:2, ...
+                'interpolateRoots', false, 'config', cfg);
+            grid = evaluator.getGrid();
+            extent = 2 * (obj.geom.maxRadius() + obj.geom.maxHeight());
+            h = extent / (cfg.ntab - 2);
+            targets = [ ...
+                extent-h, 0, extent-h; ... % corner: inner-inner
+                extent,   0, extent-h; ... % corner: edge-inner
+                extent-h, 0, extent;   ... % corner: inner-edge
+                extent,   0, extent;   ... % corner: edge-edge
+                extent+h, 0, extent+h; ... % corner: extrapolated
+                extent-h, 0, 0.1; ...      % radial triplet
+                extent,   0, 0.1; ...
+                extent+h, 0, 0.1; ...
+                0.1, 0, -(extent-h); ...   % negative-z triplet
+                0.1, 0, -extent; ...
+                0.1, 0, -(extent+h)];
+
+            for component = 1:obj.kernel.numComponents()
+                density = zeros(grid.numPoints(), obj.kernel.numComponents());
+                density(:,component) = 1;
+                [~, classification] = evaluator.evaluate( ...
+                    targets, density, 'tol', realmin);
+
+                for factorIndex = 1:numel(classification.indicators)
+                    values = classification.indicators{factorIndex};
+                    logs = log10(values);
+                    obj.verifyEqual(logs(8), 2*logs(7) - logs(6), ...
+                        'AbsTol', 5e-12);
+                    obj.verifyEqual(logs(11), 2*logs(10) - logs(9), ...
+                        'AbsTol', 5e-12);
+                    expectedCorner = logs(1) - 2*logs(2) - 2*logs(3) + 4*logs(4);
+                    obj.verifyEqual(logs(5), expectedCorner, 'AbsTol', 5e-12);
+                end
+            end
+        end
+
+        function test_near_boundary_extrapolation_matches_direct(obj)
+            cfg = quadind.util.Config('ntab', 16, 'nztab', 16);
+            evaluator = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 10, 'nph', 16, 'upsampFactors', 1, ...
+                'interpolateRoots', false, 'config', cfg);
+            grid = evaluator.getGrid();
+            density = ones(grid.numPoints(), obj.kernel.numComponents());
+            extent = 2 * (obj.geom.maxRadius() + obj.geom.maxHeight());
+            halfCell = 0.5 * extent / (cfg.ntab - 2);
+            targets = [extent+halfCell, 0, 0.1; ...
+                0.1, 0, extent+halfCell; ...
+                extent+halfCell, 0, extent+halfCell];
+
+            extrapolated = evaluator.evaluate(targets, density);
+            direct = evaluator.evaluateDirect(targets, density);
+            obj.verifyTrue(all(abs(log10(extrapolated ./ direct)) < 0.25));
+        end
+
+        function test_extrapolated_root_residual_fallback(obj)
+            base = {'ntab', 8, 'nztab', 8};
+            guarded = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1, ...
+                'config', quadind.util.Config(base{:}, ...
+                    'interpolatedRootResidualTolerance', 1e-6));
+            directRoots = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1, ...
+                'interpolateRoots', false, 'config', quadind.util.Config(base{:}));
+            looseGuard = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1, ...
+                'config', quadind.util.Config(base{:}, ...
+                    'interpolatedRootResidualTolerance', 1));
+            rawRoots = quadind.IndicatorEvaluator(obj.geom, obj.kernel, ...
+                'nth', 8, 'nph', 12, 'upsampFactors', 1, ...
+                'config', quadind.util.Config(base{:}, ...
+                    'interpolatedRootResidualTolerance', NaN));
+
+            grid = guarded.getGrid();
+            [theta, phi] = grid.meshgrid();
+            density = [theta(:), 2*theta(:)-phi(:), cos(theta(:))+sin(phi(:))];
+            target = [0.5, 0, 0.1];
+
+            guardedValue = guarded.evaluate(target, density);
+            directRootValue = directRoots.evaluate(target, density);
+            looseValue = looseGuard.evaluate(target, density);
+            rawValue = rawRoots.evaluate(target, density);
+
+            obj.verifyEqual(guardedValue, directRootValue, 'RelTol', 5e-13);
+            obj.verifyEqual(looseValue, rawValue, 'RelTol', 5e-13);
+            obj.verifyGreaterThan(abs(log10(guardedValue / rawValue)), 1e-4);
+        end
+
         function test_densitymodifier_rotates_to_target_frame(obj)
             % Root densities are global Cartesian vectors; modifiers use
             % radial, azimuthal, and axial components at each target.

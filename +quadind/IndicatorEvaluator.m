@@ -24,6 +24,7 @@ classdef IndicatorEvaluator < handle
     % Indicator construction currently supports only the Stokes stresslet.
     % Because the tabulation is performed for z >= 0 and reused through
     % reflection, the geometry must be symmetric about z = 0.
+    % Targets outside the finite table are linearly extrapolated.
     %
     % See also: quadind.geometry.AxsymGeometry,
     %   quadind.kernel.StokesStresslet, quadind.grid.AxsymGrid
@@ -117,6 +118,9 @@ classdef IndicatorEvaluator < handle
             % Output:
             %   indicators - M-by-1 quadrature error indicators for the base grid
             %
+            % Targets outside the table are evaluated by linearly extrapolating
+            % the stored log10 indicators.
+            %
             % When a tolerance is supplied, classification contains:
             %   upsamplingFactor         - Recommended factor for each target
             %   requiresSpecialQuadrature- True if no tabulated factor suffices
@@ -140,13 +144,15 @@ classdef IndicatorEvaluator < handle
             parse(p, varargin{:});
             tol = p.Results.tol;
 
-            [rquery, zquery] = obj.mapTargets(targets);
+            [rquery, zquery, outsideTabulation] = obj.mapTargets(targets);
             uniformIndicators = obj.interpolateIndicators(1, rquery, zquery);
             if obj.interpolateRoots && ~isempty(obj.rootInterpolants)
                 theta0 = obj.rootInterpolants.Re{1}(rquery, zquery) + ...
                     1i * obj.rootInterpolants.Im{1}(rquery, zquery);
                 negativeZ = targets(:,3) < 0;
                 theta0(negativeZ) = pi - theta0(negativeZ);
+                theta0 = obj.repairExtrapolatedThetaRoots( ...
+                    theta0, targets, outsideTabulation);
                 [qphi, qtheta] = quadind.indicator.DensityModifier.computeDensityAtRoots(...
                     obj.grid, targets, density, theta0);
             else
@@ -219,13 +225,35 @@ classdef IndicatorEvaluator < handle
             end
         end
 
-        function [rquery, zquery] = mapTargets(obj, targets)
-            % Map Cartesian targets to the symmetric tabulation half-plane.
-            rxy = hypot(targets(:,1), targets(:,2));
-            zabs = abs(targets(:,3));
+        function [rquery, zquery, outsideTabulation] = mapTargets(obj, targets)
+            % Map targets to the symmetric tabulation half-plane.
+            rquery = hypot(targets(:,1), targets(:,2));
+            zquery = abs(targets(:,3));
             extent = 2 * (obj.geometry.maxRadius() + obj.geometry.maxHeight());
-            rquery = min(rxy, extent);
-            zquery = min(zabs, extent);
+            outsideTabulation = rquery > extent | zquery > extent;
+        end
+
+        function theta0 = repairExtrapolatedThetaRoots(obj, theta0, targets, outsideTabulation)
+            % Replace inaccurate extrapolated cached roots with direct roots.
+            rootTolerance = obj.config.interpolatedRootResidualTolerance;
+            if isnan(rootTolerance) || ~any(outsideTabulation)
+                return;
+            end
+
+            outsideIndices = find(outsideTabulation);
+            outsideTargets = targets(outsideIndices, :);
+            [~, iphi] = quadind.indicator.UniformIndicatorBuilder.findNearestNodes( ...
+                obj.grid, outsideTargets);
+            phiStar = reshape(obj.grid.phi(iphi), [], 1);
+            valid = quadind.util.Diagnostics.checkInterpolatedThetaRoots( ...
+                obj.geometry, theta0(outsideIndices), phiStar, outsideTargets, ...
+                rootTolerance, false);
+
+            if any(~valid)
+                invalidIndices = outsideIndices(~valid);
+                theta0(invalidIndices) = obj.geometry.findThetaRoot( ...
+                    targets(invalidIndices, :), phiStar(~valid));
+            end
         end
 
         function values = interpolateIndicators(obj, upsamplingFactor, rquery, zquery)

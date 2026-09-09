@@ -101,10 +101,11 @@ classdef Diagnostics
             end
         end
         
-        function [valid, residual] = checkInterpolatedThetaRoots(geometry, roots, phi, targets, tol)
+        function [valid, residual] = checkInterpolatedThetaRoots(geometry, roots, phi, targets, tol, warnOnFailure)
             % CHECKINTERPOLATEDTHETAROOTS Check the analytic complex root equation
             %
             %   [valid, residual] = checkInterpolatedThetaRoots(geometry, roots, phi, targets, tol)
+            %   [...] = checkInterpolatedThetaRoots(..., warnOnFailure)
             %
             % A complex singularity root satisfies the analytic equation
             % sum((gamma(theta,phi)-target).^2) = 0. The numerator must not
@@ -116,6 +117,7 @@ classdef Diagnostics
                 phi (:,1) {mustBeNumeric}
                 targets (:,3) {mustBeNumeric}
                 tol (1,1) {mustBePositive}
+                warnOnFailure (1,1) logical = true
             end
 
             if size(roots,1) ~= size(targets,1) || size(phi,1) ~= size(targets,1)
@@ -129,7 +131,7 @@ classdef Diagnostics
             residual = residualAbs ./ residualScale;
             valid = isfinite(roots) & residual <= tol;
 
-            if any(~valid)
+            if warnOnFailure && any(~valid)
                 warning('quadind:Diagnostics:interpolatedRootResidual', ...
                     ['%d interpolated theta root(s) failed the analytic root check ' ...
                      '(maximum normalized residual %.2e, tolerance %.2e).'], ...
