@@ -1,5 +1,7 @@
 # QuadInd: Fast quadrature error indicators for layer potentials defined on axisymmetric geometries
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22675420.svg)](https://doi.org/10.5281/zenodo.22675420)
+
 **QuadInd** is a software package written in MATLAB for rapidly evaluating quadrature error indicators for layer potentials on axisymmetric surfaces. The indicators help determine whether a target can be handled by direct quadrature or uniform upsampling, or instead requires a special quadrature method.
 
 The figure below shows QuadInd applied to the Stokes double layer potential on a capsule-shaped particle. The predicted error contours in black closely follow the measured quadrature error shown in color (left), while evaluating the indicators is inexpensive and scales linearly with the number of targets (right).
@@ -85,10 +87,10 @@ The legacy implementation is archived for reference; see [legacy/README.md](lega
 
 If you find this code useful in your research, please cite the following works:
 
-* Our paper. TODO.
+* Our paper.
 * L. af Klinteberg, C. Sorgentone, and A.-K. Tornberg, *Quadrature error estimates for layer potentials evaluated near curved surfaces in three dimensions*, Computers & Mathematics with Applications, 111 (2022), pp. 1–19, https://doi.org/10.1016/j.camwa.2022.02.001.
 * C. Sorgentone and A.-K. Tornberg, *Estimation of quadrature errors for layer potentials evaluated near surfaces with spherical topology*, Advances in Computational Mathematics, 49 (2023), article 87, https://doi.org/10.1007/s10444-023-10083-7.
 
 The software itself is also archived on Zenodo and can be cited as:
 
-* TODO
+* D. Krantz and P. Matharu, *davidkrantz/QuadInd: v0.0.1*, Sep. 2026, https://doi.org/10.5281/zenodo.22675421.
