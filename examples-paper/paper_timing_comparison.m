@@ -168,17 +168,16 @@ hold on;
 
 % Precomputation time (horizontal dashed black line)
 xlims = [min(allCounts), max(allCounts)];
-%plot(xlims, [t_precomp, t_precomp], 'k--', 'LineWidth', 1.5);
 
 % Reference slope (dotted black line)
 loglog(allCounts,1e-6*allCounts,'k:','LineWidth',1.5);
 
 xlim(xlims);
 xticks([1e1 1e2 1e3 1e4 1e5]);
-xlabel('Number of targets, $N$', 'FontSize', FS,'Interpreter', 'latex');
+xlabel('Number of targets, $M$', 'FontSize', FS,'Interpreter', 'latex');
 ylabel('Time (s)', 'FontSize', FS,'Interpreter', 'latex');
 grid on;
-annotation('textarrow',[0.44 0.5],[0.6 0.53],'String','$\mathcal{O}(N)$','fontsize',FS,'interpreter','latex')
+annotation('textarrow',[0.44 0.5],[0.6 0.53],'String','$\mathcal{O}(M)$','fontsize',FS,'interpreter','latex')
 set(gca, 'FontSize', FS);
 
 % Plot contour of error for tabulated and direct indicators
